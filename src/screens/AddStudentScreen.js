@@ -15,6 +15,9 @@ export default function AddStudentScreen({ route, navigation }) {
 
   const [name, setName] = useState(existing?.name || '');
   const [pin, setPin] = useState(existing?.pin || '');
+  const [phone, setPhone] = useState(existing?.phone || ''); // 학생 본인 번호
+  const [birthMonth, setBirthMonth] = useState(existing?.birthMonth || '');
+  const [birthDay, setBirthDay] = useState(existing?.birthDay || '');
   const [parents, setParents] = useState(
     existing?.parents || [{ name: '', phone: '' }]
   );
@@ -50,6 +53,13 @@ export default function AddStudentScreen({ route, navigation }) {
       Alert.alert('오류', `PIN ${pin}은(는) 이미 사용 중입니다.`); return false;
     }
 
+    if (birthMonth && (parseInt(birthMonth) < 1 || parseInt(birthMonth) > 12)) {
+      Alert.alert('오류', '생일 월은 1~12 사이여야 합니다.'); return false;
+    }
+    if (birthDay && (parseInt(birthDay) < 1 || parseInt(birthDay) > 31)) {
+      Alert.alert('오류', '생일 일은 1~31 사이여야 합니다.'); return false;
+    }
+
     return true;
   };
 
@@ -65,6 +75,9 @@ export default function AddStudentScreen({ route, navigation }) {
       const data = {
         name: name.trim(),
         pin,
+        phone: phone.trim(),
+        birthMonth: birthMonth ? parseInt(birthMonth) : null,
+        birthDay: birthDay ? parseInt(birthDay) : null,
         isActive: existing ? existing.isActive : true,
         parents: parents.filter(p => p.phone.trim().length > 0).map(p => ({
           name: p.name.trim(),
@@ -133,6 +146,43 @@ export default function AddStudentScreen({ route, navigation }) {
             maxLength={4}
           />
           <Text style={styles.hint}>학생이 태블릿에서 입력할 고유 번호입니다.</Text>
+
+          {/* 학생 본인 연락처 및 생일 */}
+          <View style={styles.row}>
+            <View style={{ flex: 1.5 }}>
+              <Text style={styles.label}>학생 본인 연락처</Text>
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="010-0000-0000"
+                placeholderTextColor="#bbb"
+                keyboardType="phone-pad"
+              />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.label}>생일 (월/일)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, textAlign: 'center' }]}
+                  value={birthMonth.toString()}
+                  onChangeText={t => setBirthMonth(t.replace(/\D/g, '').slice(0, 2))}
+                  placeholder="월"
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+                <Text style={{ marginHorizontal: 4 }}>/</Text>
+                <TextInput
+                  style={[styles.input, { flex: 1, textAlign: 'center' }]}
+                  value={birthDay.toString()}
+                  onChangeText={t => setBirthDay(t.replace(/\D/g, '').slice(0, 2))}
+                  placeholder="일"
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+              </View>
+            </View>
+          </View>
 
           {/* 학부모 연락처 */}
           <Text style={styles.label}>학부모 연락처</Text>
@@ -203,6 +253,10 @@ const styles = StyleSheet.create({
     color: '#333',
     marginTop: 16,
     marginBottom: 6,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
   input: {
     backgroundColor: '#fff',

@@ -4,10 +4,10 @@ import {
   SafeAreaView, FlatList, Alert
 } from 'react-native';
 import {
-  collection, query, where, onSnapshot, doc, updateDoc
+  collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { buildCheckinMessage, buildCheckoutMessage, sendAttendanceSMS } from '../utils/smsUtils';
+import { buildCheckinMessage, buildCheckoutMessage, buildBirthdayMessage, sendAttendanceSMS } from '../utils/smsUtils';
 import { formatDateForDB } from '../utils/timeUtils';
 
 const RED = '#C62828';
@@ -49,8 +49,61 @@ export default function DashboardScreen({ navigation }) {
       setTodayRecords(all);
     });
 
+    checkBirthdays();
+
     return () => unsubscribe();
   }, []);
+
+  const checkBirthdays = async () => {
+    const now = new Date();
+    // 오전 8시 이후부터 작동
+    if (now.getHours() < 8) return;
+
+    const todayStr = formatDateForDB();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+
+    try {
+      // 오늘 이미 발송했는지 체크
+      const logRef = doc(db, 'birthday_logs', todayStr);
+      const logSnap = await getDoc(logRef);
+      if (logSnap.exists()) return;
+
+      // 생일자 조회
+      const studentsRef = collection(db, 'students');
+      const q = query(studentsRef, where('birthMonth', '==', month), where('birthDay', '==', day), where('isActive', '==', true));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        await setDoc(logRef, { checked: true, sentCount: 0 });
+        return;
+      }
+
+      let sentCount = 0;
+      for (const studentDoc of snapshot.docs) {
+        const student = studentDoc.data();
+        const msg = buildBirthdayMessage(student.name);
+        
+        const phones = [];
+        if (student.phone) phones.push(student.phone);
+        if (student.parents) {
+          student.parents.forEach(p => { if (p.phone) phones.push(p.phone); });
+        }
+
+        if (phones.length > 0) {
+          await sendAttendanceSMS(phones, msg);
+          sentCount++;
+        }
+      }
+
+      await setDoc(logRef, { checked: true, sentCount, timestamp: serverTimestamp() });
+      if (sentCount > 0) {
+        Alert.alert('생일 자동 발송', `오늘 생일인 ${sentCount}명의 학생 및 학부모님께 축하 메시지를 보냈습니다.`);
+      }
+    } catch (e) {
+      console.error('생일 체크 오류:', e);
+    }
+  };
 
   const processSMS = async (record) => {
     if (processedIds.current.has(record.id)) return;

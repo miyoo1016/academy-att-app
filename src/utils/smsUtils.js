@@ -1,5 +1,5 @@
 import { sendDirectSms } from './NativeSms';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import * as SMS from 'expo-sms';
 
 // 등원 문자 메시지 생성
@@ -9,6 +9,11 @@ export const buildCheckinMessage = (name, time) =>
 // 귀가 문자 메시지 생성
 export const buildCheckoutMessage = (name, time) =>
   `[미래학원] ${time} ${name} 원생이 공부를 마치고 귀가할 예정입니다.`;
+
+// 생일 문자 메시지 생성
+export const buildBirthdayMessage = (name) => {
+  return `${name} 원생의 생일을 진심으로 축하합니다. 행복한 하루 되세요. 미래학원`;
+};
 
 /**
  * 터치 개입 없는 완전 자동 배경 문자 발송 (안드로이드)

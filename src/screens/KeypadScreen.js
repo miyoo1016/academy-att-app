@@ -105,7 +105,24 @@ export default function KeypadScreen() {
       });
 
       const typeLabel = type === 'checkin' ? '등원' : '귀가';
-      showStatus(`${student.name} 원생 ${typeLabel} ✓`, 'success');
+      let displayMsg = `${student.name} 원생 ${typeLabel} ✓`;
+
+      // 귀가 시 학습 시간 계산
+      if (type === 'checkout' && lastRecord && lastRecord.type === 'checkin' && lastRecord.timestamp) {
+        const checkinTime = lastRecord.timestamp.toDate ? lastRecord.timestamp.toDate() : new Date(lastRecord.timestamp.seconds * 1000);
+        const diffMs = now - checkinTime;
+        const diffMin = Math.floor(diffMs / (1000 * 60));
+        const hours = Math.floor(diffMin / 60);
+        const mins = diffMin % 60;
+        
+        let durationStr = '';
+        if (hours > 0) durationStr += `${hours}시간 `;
+        durationStr += `${mins}분`;
+        
+        displayMsg = `${student.name} 귀가 ✓\n(오늘 학습 시간: ${durationStr})`;
+      }
+
+      showStatus(displayMsg, 'success');
       setInput('');
     } catch (error) {
       console.error('출결 처리 오류:', error);
@@ -290,7 +307,7 @@ const styles = StyleSheet.create({
   },
   dot: { width: 22, height: 22, borderRadius: 11 },
   statusText: { textAlign: 'center', fontSize: 15, fontWeight: 'bold', marginTop: 8 },
-  successText: { color: '#A5D6A7' },
+  successText: { color: '#A5D6A7', lineHeight: 22 },
   errorText: { color: '#FFCDD2' },
   logLinkWrapper: { alignItems: 'flex-end', paddingRight: 20, marginTop: 8 },
   logLink: { color: '#fff', fontSize: 14 },
