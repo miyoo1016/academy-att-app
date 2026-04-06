@@ -7,8 +7,10 @@ import {
   collection, addDoc, query, where, getDocs, orderBy,
   serverTimestamp, doc, getDoc
 } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../config/firebase';
 import { formatTimeForSMS, formatDateForDB, formatClockDisplay, formatDateKorean } from '../utils/timeUtils';
+import { DevSettings } from 'react-native'; // 앱 재시작용
 
 const BLUE = '#1565C0';
 
@@ -132,6 +134,25 @@ export default function KeypadScreen() {
     }
   };
 
+  const resetMode = () => {
+    Alert.alert(
+      '모드 설정 초기화',
+      '초기 화면으로 돌아가시겠습니까?\n(학생/관리자 다시 선택)',
+      [
+        { text: '취소', style: 'cancel' },
+        { 
+          text: '초기화', 
+          style: 'destructive',
+          onPress: async () => {
+            await AsyncStorage.removeItem('appMode');
+            // 앱을 재시동하거나 상태를 업데이트하기 위해 강제 재기동 유도 (또는 RN 환경에 따라 적절히 처리)
+            DevSettings.reload();
+          }
+        },
+      ]
+    );
+  };
+
   const openLog = () => {
     loadTodayLog();
     setShowLog(true);
@@ -143,9 +164,13 @@ export default function KeypadScreen() {
 
       {/* 헤더 */}
       <View style={styles.header}>
-        <Text style={styles.headerSide}>☰</Text>
+        <TouchableOpacity onPress={() => Alert.alert('미래학원', '학생 출결 관리 시스템입니다.')}>
+          <Text style={styles.headerSide}>☰</Text>
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>미래학원</Text>
-        <Text style={styles.headerSide}>⚙</Text>
+        <TouchableOpacity onPress={resetMode}>
+          <Text style={styles.headerSide}>⚙</Text>
+        </TouchableOpacity>
       </View>
 
       {/* 시간 표시 */}

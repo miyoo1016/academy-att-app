@@ -1,5 +1,7 @@
 package com.mirae.academyatt.sms
 
+import android.content.Context
+import android.os.Build
 import android.telephony.SmsManager
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -15,14 +17,20 @@ class DirectSmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun sendDirectSms(phoneNumber: String, message: String, promise: Promise) {
         try {
-            // Android 11+ (API 30+) 에서는 Context를 통해 SmsManager를 가져와야 합니다.
-            val smsManager: SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            // 코틀린의 타입 안전성을 위해 명시적으로 Nullable 처리를 합니다.
+            val smsManager: SmsManager? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 reactApplicationContext.getSystemService(SmsManager::class.java)
             } else {
+                @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
             
-            // 장문 메시지 처리 (필요시 divideMessage 사용)
+            if (smsManager == null) {
+                promise.reject("SMS_ERROR", "SmsManager instance is null")
+                return
+            }
+
+            // 한글 포함 시 SMS 길이를 고려하여 안전하게 70자 기준으로 분할 전송
             if (message.length > 70) {
                 val parts = smsManager.divideMessage(message)
                 smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
@@ -32,7 +40,8 @@ class DirectSmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             
             promise.resolve(true)
         } catch (e: Exception) {
-            promise.reject("SMS_ERROR", e.message, e)
+            // 상세한 오류 메시지를 반환하여 디버깅을 돕습니다.
+            promise.reject("SMS_ERROR", e.localizedMessage ?: e.toString(), e)
         }
     }
 }

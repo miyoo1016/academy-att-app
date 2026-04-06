@@ -1,19 +1,18 @@
 // =====================================================
-// Firebase 설정 파일
-// Firebase 콘솔(https://console.firebase.google.com)에서
-// 프로젝트 설정 > 일반 > 내 앱 에서 SDK 구성을 복사해 붙여넣으세요.
+// Firebase 설정 파일 (업데이트 완료)
 // =====================================================
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCUkD62CH5Z_DNXhWGxP2QAssSML5_QgWk",
+  authDomain: "attmirae.firebaseapp.com",
+  projectId: "attmirae",
+  storageBucket: "attmirae.firebasestorage.app",
+  messagingSenderId: "688051685207",
+  appId: "1:688051685207:web:43a9339e99e32f73406012",
+  measurementId: "G-N71J3BEKKL"
 };
 
 const app = initializeApp(firebaseConfig);

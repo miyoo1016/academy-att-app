@@ -4,6 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Platform } from 'react-native';
 
 import ModeSelectScreen from './src/screens/ModeSelectScreen';
 import KeypadScreen from './src/screens/KeypadScreen';
@@ -18,10 +19,24 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    AsyncStorage.getItem('appMode').then(mode => {
+    const initApp = async () => {
+      // 웹 브라우저 테스트용 쿼리 파라미터 체크 (?mode=admin 또는 ?mode=student)
+      if (Platform.OS === 'web') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const forcedMode = urlParams.get('mode');
+        if (forcedMode === 'admin' || forcedMode === 'student' || forcedMode === 'unset') {
+          setAppMode(forcedMode);
+          setLoading(false);
+          return;
+        }
+      }
+
+      const mode = await AsyncStorage.getItem('appMode');
       setAppMode(mode || 'unset');
       setLoading(false);
-    });
+    };
+
+    initApp();
   }, []);
 
   const handleModeSelect = (mode) => {

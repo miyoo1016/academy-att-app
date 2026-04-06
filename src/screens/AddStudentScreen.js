@@ -58,6 +58,7 @@ export default function AddStudentScreen({ route, navigation }) {
     setSaving(true);
 
     try {
+      console.log('[AddStudent] Validation 시작...');
       const ok = await validate();
       if (!ok) { setSaving(false); return; }
 
@@ -71,6 +72,8 @@ export default function AddStudentScreen({ route, navigation }) {
         })),
       };
 
+      console.log('[AddStudent] Firestore 데이터 전송 시작:', data);
+      
       if (existing) {
         await updateDoc(doc(db, 'students', existing.id), data);
         Alert.alert('완료', '학생 정보가 수정되었습니다.', [
@@ -78,13 +81,15 @@ export default function AddStudentScreen({ route, navigation }) {
         ]);
       } else {
         await addDoc(collection(db, 'students'), { ...data, createdAt: new Date().toISOString() });
+        console.log('[AddStudent] 저장 성공!');
         Alert.alert('완료', `${name} 원생이 등록되었습니다.`, [
           { text: '확인', onPress: () => navigation.goBack() }
         ]);
       }
     } catch (e) {
-      console.error(e);
-      Alert.alert('오류', '저장 중 오류가 발생했습니다.');
+      console.error('[AddStudent] 저장 오류 상세:', e);
+      // 에러 메시지를 더 상세하게 표시하여 원인 파악 (권한 문제, 네트워크 문제 등)
+      Alert.alert('저장 실패', `오류 내용: ${e.message || e.toString()}\n\n*브라우저를 새로고침(F5) 후 다시 시도해 보세요.`);
     }
 
     setSaving(false);
