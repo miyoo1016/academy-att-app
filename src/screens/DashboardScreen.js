@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  SafeAreaView, FlatList, Alert
+  SafeAreaView, FlatList, Alert, Platform
 } from 'react-native';
 import {
   collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp
@@ -9,17 +9,30 @@ import {
 import { db } from '../config/firebase';
 import { buildCheckinMessage, buildCheckoutMessage, buildBirthdayMessage, sendAttendanceSMS } from '../utils/smsUtils';
 import { formatDateForDB } from '../utils/timeUtils';
+import { startSmsBackgroundService } from '../tasks/SmsBackgroundService';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const RED = '#C62828';
 
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
   const processedIds = useRef(new Set());
+  const today = formatDateForDB();
   const sessionStart = useRef(Date.now());
 
-  const today = formatDateForDB();
+  const showAlert = (title, msg) => {
+    if (Platform.OS === 'web') {
+      alert(`${title}: ${msg}`);
+    } else {
+      Alert.alert(title, msg);
+    }
+  };
 
   useEffect(() => {
+    // 자동 발송 백그라운드 태스크 시작
+    startSmsBackgroundService();
+
     const attRef = collection(db, 'attendance');
     const q = query(attRef, where('date', '==', today));
 
@@ -28,15 +41,8 @@ export default function DashboardScreen({ navigation }) {
 
       snapshot.docChanges().forEach(change => {
         if (change.type === 'added') {
-          const data = { id: change.doc.id, ...change.doc.data() };
-          // 새 기록이면서 아직 처리 안 된 건 문자 발송
-          if (!data.processed && !processedIds.current.has(data.id)) {
-            const tsMs = data.timestamp ? data.timestamp.seconds * 1000 : 0;
-            if (tsMs >= sessionStart.current - 30000) {
-              // 앱 실행 후 30초 이전까지의 미처리 건도 발송
-              processSMS(data);
-            }
-          }
+          // 화면에서는 문자 전송 로직 삭제 (백그라운드 서비스에서 처리함)
+          // 단지 데이터만 UI에 표출
         }
       });
 
@@ -98,7 +104,7 @@ export default function DashboardScreen({ navigation }) {
 
       await setDoc(logRef, { checked: true, sentCount, timestamp: serverTimestamp() });
       if (sentCount > 0) {
-        Alert.alert('생일 자동 발송', `오늘 생일인 ${sentCount}명의 학생 및 학부모님께 축하 메시지를 보냈습니다.`);
+        showAlert('생일 자동 발송', `오늘 생일인 ${sentCount}명의 학생 및 학부모님께 축하 메시지를 보냈습니다.`);
       }
     } catch (e) {
       console.error('생일 체크 오류:', e);
@@ -136,7 +142,7 @@ export default function DashboardScreen({ navigation }) {
   const resendSMS = (record) => {
     const phones = record.parentPhones || [];
     if (phones.length === 0) {
-      Alert.alert('오류', '등록된 학부모 연락처가 없습니다.');
+      showAlert('오류', '등록된 학부모 연락처가 없습니다.');
       return;
     }
     const msg = record.type === 'checkin'
@@ -144,6 +150,19 @@ export default function DashboardScreen({ navigation }) {
       : buildCheckoutMessage(record.studentName, record.time);
     processedIds.current.delete(record.id);
     processSMS({ ...record });
+  };
+
+  const handleSwitchToKeypad = async () => {
+    if (Platform.OS === 'web') {
+      window.location.href = '/?mode=student';
+    } else {
+      await AsyncStorage.setItem('appMode', 'student');
+      Alert.alert(
+        '모드 변경',
+        '입력패드 모드로 돌아가려면 앱을 재시작해주세요.',
+        [{ text: '확인' }]
+      );
+    }
   };
 
   const checkinCount = todayRecords.filter(r => r.type === 'checkin').length;
@@ -156,9 +175,14 @@ export default function DashboardScreen({ navigation }) {
       {/* 헤더 */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>미래학원 출결 현황</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('Students')}>
-          <Text style={styles.headerBtn}>학생관리</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={handleSwitchToKeypad} style={{ marginRight: 15 }}>
+            <Text style={styles.headerBtn}>입력패드</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate('Students')}>
+            <Text style={styles.headerBtn}>학생관리</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* 오늘 통계 */}

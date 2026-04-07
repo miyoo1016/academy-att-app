@@ -36,28 +36,39 @@ export default function AddStudentScreen({ route, navigation }) {
     setParents(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   };
 
+  const showAlert = (title, msg, buttons) => {
+    if (Platform.OS === 'web') {
+      alert(`${title}: ${msg}`);
+      if (buttons && buttons[0] && buttons[0].onPress) {
+        buttons[0].onPress();
+      }
+    } else {
+      Alert.alert(title, msg, buttons);
+    }
+  };
+
   const validate = async () => {
-    if (!name.trim()) { Alert.alert('오류', '이름을 입력해주세요.'); return false; }
+    if (!name.trim()) { showAlert('오류', '이름을 입력해주세요.'); return false; }
     if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      Alert.alert('오류', 'PIN은 숫자 4자리여야 합니다.'); return false;
+      showAlert('오류', 'PIN은 숫자 4자리여야 합니다.'); return false;
     }
 
     const hasPhone = parents.some(p => p.phone.trim().length > 0);
-    if (!hasPhone) { Alert.alert('오류', '학부모 전화번호를 최소 1개 입력해주세요.'); return false; }
+    if (!hasPhone) { showAlert('오류', '학부모 전화번호를 최소 1개 입력해주세요.'); return false; }
 
     // PIN 중복 확인
     const q = query(collection(db, 'students'), where('pin', '==', pin));
     const snapshot = await getDocs(q);
     const duplicate = snapshot.docs.find(d => d.id !== existing?.id);
     if (duplicate) {
-      Alert.alert('오류', `PIN ${pin}은(는) 이미 사용 중입니다.`); return false;
+      showAlert('오류', `PIN ${pin}은(는) 이미 사용 중입니다.`); return false;
     }
 
     if (birthMonth && (parseInt(birthMonth) < 1 || parseInt(birthMonth) > 12)) {
-      Alert.alert('오류', '생일 월은 1~12 사이여야 합니다.'); return false;
+      showAlert('오류', '생일 월은 1~12 사이여야 합니다.'); return false;
     }
     if (birthDay && (parseInt(birthDay) < 1 || parseInt(birthDay) > 31)) {
-      Alert.alert('오류', '생일 일은 1~31 사이여야 합니다.'); return false;
+      showAlert('오류', '생일 일은 1~31 사이여야 합니다.'); return false;
     }
 
     return true;
@@ -89,20 +100,19 @@ export default function AddStudentScreen({ route, navigation }) {
       
       if (existing) {
         await updateDoc(doc(db, 'students', existing.id), data);
-        Alert.alert('완료', '학생 정보가 수정되었습니다.', [
+        showAlert('완료', '학생 정보가 수정되었습니다.', [
           { text: '확인', onPress: () => navigation.goBack() }
         ]);
       } else {
         await addDoc(collection(db, 'students'), { ...data, createdAt: new Date().toISOString() });
         console.log('[AddStudent] 저장 성공!');
-        Alert.alert('완료', `${name} 원생이 등록되었습니다.`, [
+        showAlert('완료', `${name} 원생이 등록되었습니다.`, [
           { text: '확인', onPress: () => navigation.goBack() }
         ]);
       }
     } catch (e) {
       console.error('[AddStudent] 저장 오류 상세:', e);
-      // 에러 메시지를 더 상세하게 표시하여 원인 파악 (권한 문제, 네트워크 문제 등)
-      Alert.alert('저장 실패', `오류 내용: ${e.message || e.toString()}\n\n*브라우저를 새로고침(F5) 후 다시 시도해 보세요.`);
+      showAlert('저장 실패', `오류 내용: ${e.message || e.toString()}`);
     }
 
     setSaving(false);

@@ -151,6 +151,19 @@ export default function KeypadScreen() {
     }
   };
 
+  const handleSwitchToAdmin = async () => {
+    if (Platform.OS === 'web') {
+      window.location.href = '/?mode=admin';
+    } else {
+      await AsyncStorage.setItem('appMode', 'admin');
+      Alert.alert(
+        '모드 변경',
+        '관리자 모드로 전환하려면 앱을 완전히 종료 후 다시 켜주세요.',
+        [{ text: '확인' }]
+      );
+    }
+  };
+
   const resetMode = () => {
     Alert.alert(
       '모드 설정 초기화',
@@ -162,8 +175,7 @@ export default function KeypadScreen() {
           style: 'destructive',
           onPress: async () => {
             await AsyncStorage.removeItem('appMode');
-            // 앱을 재시동하거나 상태를 업데이트하기 위해 강제 재기동 유도 (또는 RN 환경에 따라 적절히 처리)
-            DevSettings.reload();
+            Alert.alert('완료', '앱을 재시작해 주세요.');
           }
         },
       ]
@@ -185,9 +197,14 @@ export default function KeypadScreen() {
           <Text style={styles.headerSide}>☰</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>미래학원</Text>
-        <TouchableOpacity onPress={resetMode}>
-          <Text style={styles.headerSide}>⚙</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={handleSwitchToAdmin} style={{ marginRight: 15 }}>
+            <Text style={{ color: '#fff', fontSize: 15, textDecorationLine: 'underline' }}>관리자</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={resetMode}>
+            <Text style={styles.headerSide}>⚙</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* 시간 표시 */}

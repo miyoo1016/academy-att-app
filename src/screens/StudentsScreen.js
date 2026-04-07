@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  SafeAreaView, FlatList, Alert
+  SafeAreaView, FlatList, Alert, ScrollView, Platform
 } from 'react-native';
 import {
   collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy
@@ -13,6 +13,7 @@ const RED = '#C62828';
 
 export default function StudentsScreen({ navigation }) {
   const [students, setStudents] = useState([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const loadStudents = async () => {
     try {
@@ -34,25 +35,79 @@ export default function StudentsScreen({ navigation }) {
     setStudents(prev => prev.map(s => s.id === student.id ? { ...s, isActive: newStatus } : s));
   };
 
-  const confirmDelete = (student) => {
-    Alert.alert(
-      '학생 삭제',
-      `${student.name} 원생을 삭제하시겠습니까?\n출결 기록은 남습니다.`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '삭제', style: 'destructive',
-          onPress: async () => {
-            await deleteDoc(doc(db, 'students', student.id));
-            setStudents(prev => prev.filter(s => s.id !== student.id));
-          }
-        }
-      ]
-    );
+  const handleTapDelete = (student) => {
+    if (confirmDeleteId === student.id) {
+      // 두 번째 탭: 실제 삭제 수행
+      handleDelete(student);
+      setConfirmDeleteId(null);
+    } else {
+      // 첫 번째 탭: 확인 상태로 변경
+      setConfirmDeleteId(student.id);
+      // 3초 후 초기화
+      setTimeout(() => {
+        setConfirmDeleteId(null);
+      }, 3000);
+    }
   };
 
+  const handleDelete = async (student) => {
+    try {
+      await deleteDoc(doc(db, 'students', student.id));
+      setStudents(prev => prev.filter(s => s.id !== student.id));
+    } catch (e) {
+      console.error('삭제 오류:', e);
+      if (Platform.OS === 'web') {
+        alert('삭제 중 오류가 발생했습니다.');
+      }
+    }
+  };
+
+  // 개별 카드 렌더링 함수
+  const renderStudentCard = (item) => (
+    <View key={item.id} style={[styles.card, !item.isActive && styles.cardInactive]}>
+      <View style={styles.cardInfo}>
+        <Text style={[styles.studentName, !item.isActive && styles.inactiveText]}>
+          {item.name}
+        </Text>
+        <Text style={styles.pinText}>PIN: {item.pin}</Text>
+        {item.parents && item.parents.length > 0 && (
+          <Text style={styles.parentText}>
+            {item.parents.filter(p => p.phone).map(p => p.phone).join(', ')}
+          </Text>
+        )}
+      </View>
+      <View style={styles.cardActions}>
+        <TouchableOpacity
+          style={[styles.actionBtn, item.isActive ? styles.activeBtn : styles.inactiveBtn]}
+          onPress={() => toggleActive(item)}
+        >
+          <Text style={styles.actionBtnText}>{item.isActive ? '재원' : '휴원'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.editBtn]}
+          onPress={() => navigation.navigate('AddStudent', { student: item })}
+        >
+          <Text style={styles.actionBtnText}>수정</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.actionBtn, 
+            confirmDeleteId === item.id ? styles.confirmBtn : styles.deleteBtn
+          ]}
+          onPress={() => handleTapDelete(item)}
+        >
+          <Text style={styles.actionBtnText}>
+            {confirmDeleteId === item.id ? '정말 삭제?' : '삭제'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const MainContainer = Platform.OS === 'web' ? View : SafeAreaView;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <MainContainer style={styles.container}>
       <StatusBar backgroundColor={RED} barStyle="light-content" />
 
       <View style={styles.header}>
@@ -68,69 +123,71 @@ export default function StudentsScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={students}
-        keyExtractor={item => item.id}
-        contentContainerStyle={{ padding: 12 }}
-        renderItem={({ item }) => (
-          <View style={[styles.card, !item.isActive && styles.cardInactive]}>
-            <View style={styles.cardInfo}>
-              <Text style={[styles.studentName, !item.isActive && styles.inactiveText]}>
-                {item.name}
-              </Text>
-              <Text style={styles.pinText}>PIN: {item.pin}</Text>
-              {item.parents && item.parents.length > 0 && (
-                <Text style={styles.parentText}>
-                  {item.parents.filter(p => p.phone).map(p => p.phone).join(', ')}
-                </Text>
-              )}
-            </View>
-            <View style={styles.cardActions}>
-              <TouchableOpacity
-                style={[styles.actionBtn, item.isActive ? styles.activeBtn : styles.inactiveBtn]}
-                onPress={() => toggleActive(item)}
-              >
-                <Text style={styles.actionBtnText}>{item.isActive ? '재원' : '휴원'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.editBtn]}
-                onPress={() => navigation.navigate('AddStudent', { student: item })}
-              >
-                <Text style={styles.actionBtnText}>수정</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.deleteBtn]}
-                onPress={() => confirmDelete(item)}
-              >
-                <Text style={styles.actionBtnText}>삭제</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+      <View style={styles.listWrapper}>
+        {Platform.OS === 'web' ? (
+          <ScrollView
+            style={styles.webScrollView}
+            contentContainerStyle={styles.listContent}
+          >
+            {students.length > 0 ? (
+              students.map(item => renderStudentCard(item))
+            ) : (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>등록된 학생이 없습니다.</Text>
+                <TouchableOpacity
+                  style={styles.addFirstBtn}
+                  onPress={() => navigation.navigate('AddStudent', { student: null })}
+                >
+                  <Text style={styles.addFirstText}>첫 번째 학생 추가하기</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        ) : (
+          <FlatList
+            data={students}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.listContent}
+            renderItem={({ item }) => renderStudentCard(item)}
+            ListEmptyComponent={
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>등록된 학생이 없습니다.</Text>
+                <TouchableOpacity
+                  style={styles.addFirstBtn}
+                  onPress={() => navigation.navigate('AddStudent', { student: null })}
+                >
+                  <Text style={styles.addFirstText}>첫 번째 학생 추가하기</Text>
+                </TouchableOpacity>
+              </View>
+            }
+          />
         )}
-        ListEmptyComponent={
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>등록된 학생이 없습니다.</Text>
-            <TouchableOpacity
-              style={styles.addFirstBtn}
-              onPress={() => navigation.navigate('AddStudent', { student: null })}
-            >
-              <Text style={styles.addFirstText}>첫 번째 학생 추가하기</Text>
-            </TouchableOpacity>
-          </View>
-        }
-      />
-    </SafeAreaView>
+      </View>
+    </MainContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+    ...Platform.select({
+      web: {
+        height: '100vh',
+        width: '100%',
+        position: 'fixed', // 웹에서 전체 배경 고정
+        top: 0,
+        left: 0,
+      },
+    }),
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: RED,
     padding: 16,
+    zIndex: 100,
   },
   backBtn: { color: '#fff', fontSize: 15 },
   headerTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
@@ -141,12 +198,29 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   addBtnText: { color: RED, fontWeight: 'bold', fontSize: 15 },
+  listWrapper: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  webScrollView: {
+    flex: 1,
+  },
+  listContent: {
+    padding: 12,
+    paddingBottom: 100, // 모바일/웹 모두 하단 여백 충분히
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
     marginBottom: 10,
     elevation: 1,
+    // 웹에서의 그림자 효과
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+      },
+    }),
   },
   cardInactive: { opacity: 0.55 },
   cardInfo: { marginBottom: 10 },
@@ -164,6 +238,7 @@ const styles = StyleSheet.create({
   inactiveBtn: { backgroundColor: '#9E9E9E' },
   editBtn: { backgroundColor: '#FF9800' },
   deleteBtn: { backgroundColor: '#C62828' },
+  confirmBtn: { backgroundColor: '#D32F2F', borderWidth: 2, borderColor: '#fff' },
   actionBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   emptyBox: { alignItems: 'center', marginTop: 60 },
   emptyText: { color: '#999', fontSize: 16, marginBottom: 16 },
