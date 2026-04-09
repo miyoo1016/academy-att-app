@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  SafeAreaView, Vibration, Modal, FlatList, Alert
+  SafeAreaView, Vibration, Modal, FlatList, Alert, Platform, useWindowDimensions
 } from 'react-native';
 import {
   collection, addDoc, query, where, getDocs, orderBy,
-  serverTimestamp, doc, getDoc
+  serverTimestamp, doc, getDoc, onSnapshot, updateDoc
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../config/firebase';
 import { formatTimeForSMS, formatDateForDB, formatClockDisplay, formatDateKorean } from '../utils/timeUtils';
-import { DevSettings } from 'react-native'; // 앱 재시작용
+import { buildCheckinMessage, buildCheckoutMessage, sendAttendanceSMS } from '../utils/smsUtils';
 
 const BLUE = '#1565C0';
 
@@ -22,17 +22,88 @@ const PAD_KEYS = [
 ];
 
 export default function KeypadScreen() {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height && width > 768; // 태블릿 가로 모드 기준
+
   const [input, setInput] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
   const [statusMsg, setStatusMsg] = useState({ text: '', type: '' }); // type: 'success' | 'error'
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [todayLog, setTodayLog] = useState([]);
+  const [allStudents, setAllStudents] = useState([]); // 로컬 학생 캐시
+  const lastEntryRef = useRef({ pin: '', time: 0 });
+  const isProcessingRef = useRef(false);
   const statusTimer = useRef(null);
+  const logTimer = useRef(null);
 
+  // 0. 학생 명단 실시간 동기화 (반응 속도 및 최신화 유지)
+  useEffect(() => {
+    const studentsRef = collection(db, 'students');
+    const q = query(studentsRef, where('isActive', '==', true));
+    
+    // onSnapshot을 사용하여 학생 명단이 변경될 때마다 자동으로 로컬 캐시 갱신
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setAllStudents(list);
+      console.log(`Updated local cache: ${list.length} students.`);
+    }, (error) => {
+      console.error('학생 명단 실시간 동기화 실패:', error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+
+
+
+
+
+
+  // 1. 시계 타이머
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // 2. 웹 브라우저 화면 꺼짐 방지 (Wake Lock)
+  useEffect(() => {
+    let wakeLock = null;
+
+    const requestWakeLock = async () => {
+      if (Platform.OS === 'web' && 'wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('Wake Lock is active');
+        } catch (err) {
+          console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+        }
+      }
+    };
+
+    requestWakeLock();
+
+    const handleVisibilityChange = () => {
+      if (wakeLock !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      if (wakeLock !== null) {
+        wakeLock.release().then(() => { wakeLock = null; });
+      }
+      if (Platform.OS === 'web') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, []);
 
   const showStatus = (text, type = 'success') => {
@@ -42,7 +113,7 @@ export default function KeypadScreen() {
   };
 
   const handlePress = (key) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current || isProcessing) return;
     if (key === 'C') {
       setInput('');
     } else if (key === 'OK') {
@@ -53,33 +124,55 @@ export default function KeypadScreen() {
   };
 
   const handleSubmit = async () => {
-    if (isProcessing || input.length !== 4) return;
+    if (isProcessingRef.current || isProcessing || input.length !== 4) return;
+
+    // 10초 이내 동일 번호 입력 방지
+    const now = Date.now();
+    if (input === lastEntryRef.current.pin && (now - lastEntryRef.current.time) < 10000) {
+      showStatus('이미 처리되었습니다. (10초 대기)', 'error');
+      setInput('');
+      return;
+    }
+
+    // 즉각적인 중복 실행 및 동일 번호 입력 방지 (서버 통신 대기시간 이전)
+    isProcessingRef.current = true;
+    lastEntryRef.current = { pin: input, time: now };
     setIsProcessing(true);
 
     try {
-      // PIN으로 학생 조회
-      const studentsRef = collection(db, 'students');
-      const q = query(studentsRef, where('pin', '==', input), where('isActive', '==', true));
-      const snapshot = await getDocs(q);
+    // 1. 로컬 캐시에서 학생 즉시 찾기 (네트워크 지연 제거)
+    console.log(`[Keypad] 검색 시작... 입력 PIN: ${input}, 전체 학생 수: ${allStudents.length}명`);
+    
+    if (allStudents.length === 0) {
+      showStatus('학생 명단을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.', 'error');
+      setIsProcessing(false);
+      isProcessingRef.current = false;
+      return;
+    }
 
-      if (snapshot.empty) {
+    const student = allStudents.find(s => s.pin === input);
+
+      if (!student) {
         showStatus('등록되지 않은 번호입니다.', 'error');
         Vibration.vibrate(500);
         setInput('');
         setIsProcessing(false);
+        isProcessingRef.current = false;
+        lastEntryRef.current = { pin: '', time: 0 }; 
         return;
       }
 
-      const studentDoc = snapshot.docs[0];
-      const student = { id: studentDoc.id, ...studentDoc.data() };
+      // 학생 이름 즉시 노출 (사용자 체감 속도 극대화)
+      showStatus(`${student.name} 원생 처리 중...`, 'success');
+      const currentInput = input; // 입력값 백업
+      setInput(''); 
 
-      // 오늘 마지막 출결 확인
+      // 2. 출결 기록 확인 및 저장 (배경 처리)
       const today = formatDateForDB();
       const attRef = collection(db, 'attendance');
       const attQuery = query(attRef, where('studentId', '==', student.id), where('date', '==', today));
       const attSnapshot = await getDocs(attQuery);
 
-      // 마지막 기록 찾기 (타임스탬프 정렬 - 클라이언트)
       let lastRecord = null;
       attSnapshot.forEach(d => {
         const data = d.data();
@@ -92,8 +185,7 @@ export default function KeypadScreen() {
       const now = new Date();
       const timeStr = formatTimeForSMS(now);
 
-      // 출결 기록 저장 (학부모 전화번호 비정규화해서 같이 저장)
-      await addDoc(collection(db, 'attendance'), {
+      const recordRef = await addDoc(collection(db, 'attendance'), {
         studentId: student.id,
         studentName: student.name,
         parentPhones: student.parents ? student.parents.map(p => p.phone).filter(Boolean) : [],
@@ -107,7 +199,6 @@ export default function KeypadScreen() {
       const typeLabel = type === 'checkin' ? '등원' : '귀가';
       let displayMsg = `${student.name} 원생 ${typeLabel} ✓`;
 
-      // 귀가 시 학습 시간 계산
       if (type === 'checkout' && lastRecord && lastRecord.type === 'checkin' && lastRecord.timestamp) {
         const checkinTime = lastRecord.timestamp.toDate ? lastRecord.timestamp.toDate() : new Date(lastRecord.timestamp.seconds * 1000);
         const diffMs = now - checkinTime;
@@ -119,19 +210,47 @@ export default function KeypadScreen() {
         if (hours > 0) durationStr += `${hours}시간 `;
         durationStr += `${mins}분`;
         
-        displayMsg = `${student.name} 귀가 ✓\n(오늘 학습 시간: ${durationStr})`;
+        displayMsg = `${student.name} 귀가 ✓\n(공부시간: ${durationStr})`;
       }
 
       showStatus(displayMsg, 'success');
-      setInput('');
+
+      // 3. 문자 발송 (사용자 클릭 이벤트 직계존속으로 실행하여 브라우저 로킹 방지)
+      const phones = student.parents ? student.parents.map(p => p.phone).filter(Boolean) : [];
+      if (phones.length > 0) {
+        const msg = type === 'checkin'
+          ? buildCheckinMessage(student.name, timeStr)
+          : buildCheckoutMessage(student.name, timeStr);
+        
+        // 브라우저가 '사용자 제스처'로 인식하도록 최대한 빨리 호출
+        const recordId = recordRef.id;
+        console.log(`[Keypad] SMS 발송 시도: ${phones.join(', ')}`);
+        
+        sendAttendanceSMS(phones, msg).then(sent => {
+          if (sent) {
+            updateDoc(doc(db, 'attendance', recordId), { processed: true });
+          } else {
+            console.warn('[Keypad] SMS 발송 반환값이 false입니다.');
+          }
+        }).catch(err => {
+          console.error('문자 발송 실패:', err);
+          if (Platform.OS === 'web') {
+            Alert.alert('문자 발송 오류', '브라우저에서 문자 앱을 열지 못했습니다. 팝업 차단 설정을 확인하거나 안드로이드 전용 앱을 사용해 주세요.');
+          }
+        });
+      }
+
     } catch (error) {
       console.error('출결 처리 오류:', error);
       showStatus('오류가 발생했습니다. 다시 시도해주세요.', 'error');
       setInput('');
+      lastEntryRef.current = { pin: '', time: 0 }; // 에러 시 바로 재시도 가능하게 초기화
     }
 
     setIsProcessing(false);
+    isProcessingRef.current = false;
   };
+
 
   const loadTodayLog = async () => {
     try {
@@ -156,42 +275,52 @@ export default function KeypadScreen() {
       window.location.href = '/?mode=admin';
     } else {
       await AsyncStorage.setItem('appMode', 'admin');
-      Alert.alert(
-        '모드 변경',
-        '관리자 모드로 전환하려면 앱을 완전히 종료 후 다시 켜주세요.',
-        [{ text: '확인' }]
-      );
+      Alert.alert('모드 변경', '관리자 모드를 위해 앱을 다시 켜주세요.', [{ text: '확인' }]);
     }
   };
 
   const resetMode = () => {
-    Alert.alert(
-      '모드 설정 초기화',
-      '초기 화면으로 돌아가시겠습니까?\n(학생/관리자 다시 선택)',
-      [
-        { text: '취소', style: 'cancel' },
-        { 
-          text: '초기화', 
-          style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.removeItem('appMode');
-            Alert.alert('완료', '앱을 재시작해 주세요.');
-          }
-        },
-      ]
-    );
+    Alert.alert('초기화', '학생/관리자 다시 선택 화면으로 가시겠습니까?', [
+      { text: '취소', style: 'cancel' },
+      { text: '초기화', style: 'destructive', onPress: async () => {
+        await AsyncStorage.removeItem('appMode');
+        Alert.alert('완료', '앱을 재시작해 주세요.');
+      }},
+    ]);
   };
 
   const openLog = () => {
     loadTodayLog();
     setShowLog(true);
+    
+    // 이전 타이머가 있다면 확실히 제거
+    if (logTimer.current) {
+      clearTimeout(logTimer.current);
+    }
+    
+    // 모달을 열 때 10초 타이머 세팅
+    logTimer.current = setTimeout(() => {
+      closeLog();
+    }, 10000);
   };
+
+  const closeLog = () => {
+    setShowLog(false);
+    if (logTimer.current) {
+      clearTimeout(logTimer.current);
+      logTimer.current = null;
+    }
+  };
+
+
+
+
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor={BLUE} barStyle="light-content" />
 
-      {/* 헤더 */}
+      {/* 헤더 (항상 상단) */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => Alert.alert('미래학원', '학생 출결 관리 시스템입니다.')}>
           <Text style={styles.headerSide}>☰</Text>
@@ -207,68 +336,74 @@ export default function KeypadScreen() {
         </View>
       </View>
 
-      {/* 시간 표시 */}
-      <View style={styles.timeRow}>
-        <Text style={styles.dateText}>{formatDateKorean(currentTime)}</Text>
-        <Text style={styles.timeText}>{formatClockDisplay(currentTime)}</Text>
-      </View>
+      <View style={[styles.contentWrapper, isLandscape && styles.landscapeContent]}>
+        
+        {/* 가로 모드일 때 좌측, 세로일 때 상단 섹션 */}
+        <View style={[isLandscape ? styles.leftSection : styles.topSection]}>
+          <View style={styles.timeRow}>
+            <Text style={styles.dateText}>{formatDateKorean(currentTime)}</Text>
+            <Text style={styles.timeText}>{formatClockDisplay(currentTime)}</Text>
+          </View>
 
-      {/* PIN 입력 표시 (점) */}
-      <View style={styles.inputBox}>
-        {[0, 1, 2, 3].map(i => (
-          <View
-            key={i}
-            style={[styles.dot, { backgroundColor: i < input.length ? '#222' : 'transparent', borderColor: '#bbb', borderWidth: i < input.length ? 0 : 1.5 }]}
-          />
-        ))}
-      </View>
-
-      {/* 상태 메시지 / 출첵 목록 링크 */}
-      {statusMsg.text ? (
-        <Text style={[styles.statusText, statusMsg.type === 'error' ? styles.errorText : styles.successText]}>
-          {statusMsg.text}
-        </Text>
-      ) : (
-        <TouchableOpacity onPress={openLog} style={styles.logLinkWrapper}>
-          <Text style={styles.logLink}>출첵 목록 열기</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* 숫자 패드 */}
-      <View style={styles.padWrapper}>
-        {PAD_KEYS.map((row, ri) => (
-          <View key={ri} style={styles.padRow}>
-            {row.map(key => (
-              <TouchableOpacity
-                key={key}
-                style={[
-                  styles.key,
-                  key === 'OK' && styles.okKey,
-                  key === 'OK' && input.length < 4 && styles.okKeyDisabled,
-                ]}
-                onPress={() => handlePress(key)}
-                activeOpacity={0.6}
-                disabled={isProcessing}
-              >
-                <Text style={[
-                  styles.keyText,
-                  key === 'C' && styles.clearText,
-                  key === 'OK' && styles.okText,
-                ]}>
-                  {key}
-                </Text>
-              </TouchableOpacity>
+          <View style={styles.inputBox}>
+            {[0, 1, 2, 3].map(i => (
+              <View
+                key={i}
+                style={[styles.dot, { backgroundColor: i < input.length ? '#222' : 'transparent', borderColor: '#bbb', borderWidth: i < input.length ? 0 : 1.5 }]}
+              />
             ))}
           </View>
-        ))}
+
+          <View style={styles.statusArea}>
+            {statusMsg.text ? (
+              <Text style={[styles.statusText, statusMsg.type === 'error' ? styles.errorText : styles.successText]}>
+                {statusMsg.text}
+              </Text>
+            ) : (
+              <TouchableOpacity onPress={openLog} style={styles.logLinkWrapper}>
+                <Text style={styles.logLink}>최근 출결 확인</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* 가로 모드일 때 우측, 세로일 때 하단 섹션 (키패드) */}
+        <View style={[isLandscape ? styles.rightSection : styles.bottomSection]}>
+          <View style={styles.padWrapper}>
+            {PAD_KEYS.map((row, ri) => (
+              <View key={ri} style={styles.padRow}>
+                {row.map(key => (
+                  <TouchableOpacity
+                    key={key}
+                    style={[
+                      styles.key,
+                      key === 'OK' && styles.okKey,
+                      key === 'OK' && input.length < 4 && styles.okKeyDisabled,
+                    ]}
+                    onPress={() => handlePress(key)}
+                    activeOpacity={0.6}
+                    disabled={isProcessing}
+                  >
+                    <Text style={[
+                      styles.keyText,
+                      key === 'C' && styles.clearText,
+                      key === 'OK' && styles.okText,
+                    ]}>
+                      {key}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ))}
+          </View>
+        </View>
       </View>
 
-      {/* 오늘 출결 목록 모달 */}
-      <Modal visible={showLog} animationType="slide" onRequestClose={() => setShowLog(false)}>
+      <Modal visible={showLog} animationType="slide" onRequestClose={closeLog}>
         <SafeAreaView style={styles.logModal}>
           <View style={styles.logHeader}>
             <Text style={styles.logHeaderTitle}>오늘 출결 목록</Text>
-            <TouchableOpacity onPress={() => setShowLog(false)}>
+            <TouchableOpacity onPress={closeLog}>
               <Text style={styles.logClose}>✕</Text>
             </TouchableOpacity>
           </View>
@@ -293,47 +428,96 @@ export default function KeypadScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: BLUE },
+  container: {
+    flex: 1,
+    backgroundColor: BLUE,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 10,
+    zIndex: 10,
   },
   headerSide: { color: '#fff', fontSize: 26 },
   headerTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'center',
-    gap: 8,
-    paddingBottom: 12,
+  
+  contentWrapper: {
+    flex: 1,
+    width: '100%',
+    alignSelf: 'center',
   },
-  dateText: { color: '#fff', fontSize: 16 },
-  timeText: { color: '#fff', fontSize: 44, fontWeight: 'bold' },
+  landscapeContent: {
+    flexDirection: 'row',
+    maxWidth: 1000,
+    paddingHorizontal: 20,
+  },
+
+  // 구역 나누기 (가로 모드용)
+  leftSection: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingRight: 20,
+  },
+  rightSection: {
+    flex: 1.2,
+    justifyContent: 'center',
+  },
+
+  // 구역 나누기 (세로 모드용)
+  topSection: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  bottomSection: {
+    flex: 1,
+  },
+
+  timeRow: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  dateText: { color: '#fff', fontSize: 18, marginBottom: 5 },
+  timeText: { color: '#fff', fontSize: 56, fontWeight: 'bold' },
+
   inputBox: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#fff',
-    marginHorizontal: 16,
-    borderRadius: 10,
-    paddingVertical: 22,
-    gap: 24,
+    borderRadius: 12,
+    paddingVertical: 30,
+    gap: 25,
+    marginHorizontal: Platform.OS === 'web' ? 0 : 20,
+    ...Platform.select({
+      web: { boxShadow: '0 4px 15px rgba(0,0,0,0.25)' },
+    }),
   },
-  dot: { width: 22, height: 22, borderRadius: 11 },
-  statusText: { textAlign: 'center', fontSize: 15, fontWeight: 'bold', marginTop: 8 },
-  successText: { color: '#A5D6A7', lineHeight: 22 },
+  dot: { width: 24, height: 24, borderRadius: 12 },
+
+  statusArea: {
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  statusText: { textAlign: 'center', fontSize: 18, fontWeight: 'bold' },
+  successText: { color: '#A5D6A7' },
   errorText: { color: '#FFCDD2' },
-  logLinkWrapper: { alignItems: 'flex-end', paddingRight: 20, marginTop: 8 },
-  logLink: { color: '#fff', fontSize: 14 },
+  
+  logLinkWrapper: { marginTop: 5 },
+  logLink: { color: '#fff', fontSize: 15, textDecorationLine: 'underline', opacity: 0.8 },
+
   padWrapper: {
     flex: 1,
     backgroundColor: '#EFEFEF',
-    margin: 12,
-    borderRadius: 16,
-    paddingVertical: 4,
+    margin: 10,
+    borderRadius: 20,
+    padding: 10,
+    ...Platform.select({
+      web: { boxShadow: '0 10px 30px rgba(0,0,0,0.3)' },
+    }),
   },
   padRow: {
     flex: 1,
@@ -343,19 +527,21 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    margin: 4,
-    borderRadius: 10,
+    margin: 6,
+    borderRadius: 15,
+    backgroundColor: '#fff',
+    ...Platform.select({
+      web: { boxShadow: '0 2px 5px rgba(0,0,0,0.1)' },
+    }),
   },
-  keyText: { fontSize: 36, fontWeight: '300', color: '#222' },
-  clearText: { color: '#FF9800', fontWeight: '600', fontSize: 32 },
+  keyText: { fontSize: 42, fontWeight: '300', color: '#222' },
+  clearText: { color: '#FF9800', fontWeight: '600', fontSize: 36 },
   okKey: {
     backgroundColor: BLUE,
-    margin: 8,
-    borderRadius: 14,
   },
   okKeyDisabled: { backgroundColor: '#BDBDBD' },
-  okText: { color: '#fff', fontWeight: '700', fontSize: 28 },
-  // 모달 스타일
+  okText: { color: '#fff', fontWeight: '700', fontSize: 32 },
+
   logModal: { flex: 1, backgroundColor: '#fff' },
   logHeader: {
     flexDirection: 'row',

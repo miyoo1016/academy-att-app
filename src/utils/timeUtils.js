@@ -7,9 +7,12 @@ export const formatTimeForSMS = (date = new Date()) => {
   return `${period} ${displayHours.toString().padStart(2, '0')}:${minutes}`;
 };
 
-// DB 저장용 날짜: 2025-04-04
+// DB 저장용 날짜: 2025-04-04 (현지 시간 기준)
 export const formatDateForDB = (date = new Date()) => {
-  return date.toISOString().split('T')[0];
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 // 시계 표시용: 14:30:00

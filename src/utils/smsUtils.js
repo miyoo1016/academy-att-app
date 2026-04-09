@@ -52,13 +52,20 @@ export const sendAttendanceSMS = async (phones, message) => {
 
   // iOS 또는 안드로이드 네이티브 실패 시 기존 방식(반자동) 수행
   try {
-    const isAvailable = await SMS.isAvailableAsync();
-    if (!isAvailable) {
-      console.warn('이 기기에서 SMS 기능을 사용할 수 없습니다.');
-      return false;
+    // 웹 브라우저의 경우 isAvailableAsync가 false를 반환하므로 체크를 우회합니다.
+    if (Platform.OS === 'web') {
+      console.log('[SMS] 웹 브라우저 발송 시도');
+    } else {
+      const isAvailable = await SMS.isAvailableAsync();
+      if (!isAvailable) {
+        console.warn('이 기기에서 SMS 기능을 사용할 수 없습니다.');
+        Alert.alert('알림', '이 기기에서는 직접 문자 발송을 지원하지 않습니다. 안드로이드 앱을 사용하거나 별도의 문자 서버 기기를 구성해 주세요.');
+        return false;
+      }
     }
+
     const { result } = await SMS.sendSMSAsync(phones, message);
-    return result === 'sent';
+    return result === 'sent' || result === 'unknown'; 
   } catch (error) {
     console.error('SMS 폴백 발송 오류:', error);
     return false;

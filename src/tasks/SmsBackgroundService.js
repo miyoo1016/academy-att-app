@@ -9,17 +9,26 @@ const sleep = (time) => new Promise((resolve) => setTimeout(() => resolve(), tim
 
 const processedIds = new Set();
 let unsubscribeSnapshot = null;
+let isStarted = false; // 중복 초기화 방지
 
 const backgroundTask = async (taskDataArguments) => {
   const { delay } = taskDataArguments;
 
-  const today = formatDateForDB();
+  // 네이티브 모듈 및 브릿지 초기화 대기
+  await sleep(1000);
+
   const attRef = collection(db, 'attendance');
-  const q = query(attRef, where('date', '==', today));
+  const q = query(attRef, where('processed', '==', false));
+
+  // 기존 구독이 있다면 먼저 종료 (안전장치)
+  if (unsubscribeSnapshot) {
+    unsubscribeSnapshot();
+  }
 
   unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
     snapshot.docChanges().forEach(async (change) => {
-      if (change.type === 'added') {
+      // 신규 추가(added) 또는 기존 문서의 상태 변경(modified - 미처리가 되었을 경우) 대응
+      if (change.type === 'added' || change.type === 'modified') {
         const data = { id: change.doc.id, ...change.doc.data() };
         
         // 미처리고 처음 보는 id인 경우만 발송 시도
@@ -67,10 +76,10 @@ const backgroundTask = async (taskDataArguments) => {
 
 const options = {
   taskName: 'AcademySmsTask',
-  taskTitle: '미래학원 출결 감시 중',
-  taskDesc: '앱 화면이 꺼지거나 바탕화면에서도 자동 문자를 발송합니다.',
+  taskTitle: '[미래학원] 출결 문자 자동발송',
+  taskDesc: '백그라운드에서 실시간 출결 현황을 감시 중입니다.',
   taskIcon: {
-    name: 'ic_launcher',
+    name: 'ic_launcher', // 확실히 존재하는 아이콘명으로 원복
     type: 'mipmap',
   },
   color: '#C62828',

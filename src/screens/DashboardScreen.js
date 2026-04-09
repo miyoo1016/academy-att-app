@@ -37,12 +37,13 @@ export default function DashboardScreen({ navigation }) {
     const q = query(attRef, where('date', '==', today));
 
     const unsubscribe = onSnapshot(q, snapshot => {
-      const records = [];
-
       snapshot.docChanges().forEach(change => {
         if (change.type === 'added') {
-          // 화면에서는 문자 전송 로직 삭제 (백그라운드 서비스에서 처리함)
-          // 단지 데이터만 UI에 표출
+          const record = { id: change.doc.id, ...change.doc.data() };
+          // 1. 미처리된 데이터인 경우 문자 발송 시도 (화면 로직 복구)
+          if (!record.processed) {
+            processSMS(record);
+          }
         }
       });
 
