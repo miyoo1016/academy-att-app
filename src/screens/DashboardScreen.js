@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import BackgroundService from 'react-native-background-actions';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
   SafeAreaView, FlatList, Alert, Platform
@@ -17,6 +18,7 @@ const RED = '#C62828';
 
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
+  const [isServiceRunning, setIsServiceRunning] = useState(false);
   const processedIds = useRef(new Set());
   const today = formatDateForDB();
   const sessionStart = useRef(Date.now());
@@ -58,7 +60,14 @@ export default function DashboardScreen({ navigation }) {
 
     checkBirthdays();
 
-    return () => unsubscribe();
+    const serviceCheckInterval = setInterval(() => {
+      setIsServiceRunning(BackgroundService.isRunning());
+    }, 2000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(serviceCheckInterval);
+    };
   }, []);
 
   const checkBirthdays = async () => {
@@ -202,6 +211,24 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
+      {/* 서비스 상태 바 */}
+      <View style={[styles.statusBanner, isServiceRunning ? styles.statusActive : styles.statusInactive]}>
+        <View style={styles.statusDot} />
+        <Text style={styles.statusText}>
+          {isServiceRunning ? '실시간 출결 감시 서비스 가동 중' : '감시 서비스 중지됨 (앱 재시작 필요)'}
+        </Text>
+      </View>
+
+      {/* 배터리 최적화 안내 (안드로이드 전용) */}
+      {Platform.OS === 'android' && (
+        <View style={styles.batteryNotice}>
+          <Text style={styles.batteryNoticeTitle}>⚠️ 안정적인 백그라운드 작동을 위한 설정</Text>
+          <Text style={styles.batteryNoticeDesc}>
+            시스템 설정에서 이 앱의 [배터리 최적화]를 "제한 없음"으로 설정해야 26시간 이상 끊김 없이 문자가 발송됩니다.
+          </Text>
+        </View>
+      )}
+
       {/* 오늘 출결 목록 */}
       <Text style={styles.sectionTitle}>오늘 출결 기록</Text>
       <FlatList
@@ -311,4 +338,29 @@ const styles = StyleSheet.create({
   },
   resendBtnText: { fontSize: 11, color: '#1565C0' },
   emptyText: { textAlign: 'center', color: '#999', fontSize: 16, marginTop: 40 },
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginTop: 4,
+    padding: 10,
+    borderRadius: 8,
+    gap: 8,
+  },
+  statusActive: { backgroundColor: '#E8F5E9' },
+  statusInactive: { backgroundColor: '#FFEBEE' },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CAF50' },
+  statusText: { fontSize: 13, fontWeight: 'bold', color: '#2E7D32' },
+  statusInactiveText: { color: '#C62828' },
+  batteryNotice: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    padding: 12,
+    backgroundColor: '#FFF9C4',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FBC02D',
+  },
+  batteryNoticeTitle: { fontSize: 14, fontWeight: 'bold', color: '#827717', marginBottom: 2 },
+  batteryNoticeDesc: { fontSize: 12, color: '#9E9D24', lineHeight: 18 },
 });
