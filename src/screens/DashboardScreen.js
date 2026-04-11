@@ -19,6 +19,8 @@ const RED = '#C62828';
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
   const [isServiceRunning, setIsServiceRunning] = useState(false);
+  const [serviceInfo, setServiceInfo] = useState({ lastActive: null, status: 'unknown' });
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // 화면 강제 갱신용
   const processedIds = useRef(new Set());
   const today = formatDateForDB();
   const sessionStart = useRef(Date.now());
@@ -35,14 +37,15 @@ export default function DashboardScreen({ navigation }) {
     // 자동 발송 백그라운드 태스크 시작
     startSmsBackgroundService();
 
+    // 1. 출결 데이터 리스너
     const attRef = collection(db, 'attendance');
     const q = query(attRef, where('date', '==', today));
 
-    const unsubscribe = onSnapshot(q, snapshot => {
+    const unsubscribeAtt = onSnapshot(q, snapshot => {
       snapshot.docChanges().forEach(change => {
         if (change.type === 'added') {
           const record = { id: change.doc.id, ...change.doc.data() };
-          // 1. 미처리된 데이터인 경우 문자 발송 시도 (화면 로직 복구)
+          // 미처리된 데이터인 경우 문자 발송 시도
           if (!record.processed) {
             processSMS(record);
           }
@@ -58,17 +61,40 @@ export default function DashboardScreen({ navigation }) {
       setTodayRecords(all);
     });
 
+    // 2. 서비스 하트비트 상태 리스너
+    const statusRef = doc(db, 'service_status', 'main_terminal');
+    const unsubscribeStatus = onSnapshot(statusRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setServiceInfo({
+          lastActive: data.lastActive?.toDate() || null,
+          status: data.status || 'unknown'
+        });
+      }
+    });
+
     checkBirthdays();
 
     const serviceCheckInterval = setInterval(() => {
       setIsServiceRunning(BackgroundService.isRunning());
-    }, 2000);
+      setRefreshTrigger(prev => prev + 1); // 1초마다 화면 숫자 갱신 강제 발생
+    }, 1000);
 
     return () => {
-      unsubscribe();
+      unsubscribeAtt();
+      unsubscribeStatus();
       clearInterval(serviceCheckInterval);
     };
   }, []);
+
+  // 시간차 계산 함수
+  const getTimeDiffText = (date) => {
+    if (!date) return '기록 없음';
+    const diff = Math.floor((new Date() - date) / 1000);
+    if (diff < 60) return `${diff}초 전`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    return `${Math.floor(diff / 3600)}시간 전`;
+  };
 
   const checkBirthdays = async () => {
     const now = new Date();
@@ -211,13 +237,21 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 서비스 상태 바 */}
+      {/* 서비스 상태 바 (하트비트 연동) */}
       <View style={[styles.statusBanner, isServiceRunning ? styles.statusActive : styles.statusInactive]}>
-        <View style={styles.statusDot} />
-        <Text style={styles.statusText}>
-          {isServiceRunning ? '실시간 출결 감시 서비스 가동 중' : '감시 서비스 중지됨 (앱 재시작 필요)'}
-        </Text>
+        <View style={[styles.statusDot, { backgroundColor: isServiceRunning ? '#4CAF50' : '#F44336' }]} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.statusText}>
+            {isServiceRunning ? '실시간 출결 감시 서비스 가동 중' : '감시 서비스 중지됨 (앱 재시작 필요)'}
+          </Text>
+          {isServiceRunning && (
+            <Text style={{ fontSize: 11, color: '#666' }}>
+              상태 체크: {getTimeDiffText(serviceInfo.lastActive)} (네트워크 세션 유지 중)
+            </Text>
+          )}
+        </View>
       </View>
+
 
       {/* 배터리 최적화 안내 (안드로이드 전용) */}
       {Platform.OS === 'android' && (

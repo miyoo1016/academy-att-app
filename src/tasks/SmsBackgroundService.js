@@ -1,15 +1,67 @@
 import BackgroundService from 'react-native-background-actions';
 import { Platform } from 'react-native';
-import { collection, query, where, onSnapshot, doc, updateDoc, getDocs } from 'firebase/firestore';
+import { 
+  collection, query, where, onSnapshot, doc, updateDoc, 
+  getDocs, setDoc, serverTimestamp, getDoc 
+} from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { buildCheckinMessage, buildCheckoutMessage, sendAttendanceSMS } from '../utils/smsUtils';
-import { formatDateForDB } from '../utils/timeUtils';
 
 const sleep = (time) => new Promise((resolve) => setTimeout(() => resolve(), time));
 
+/**
+ * 프로젝트의 절대적인 기동성을 위해 
+ * Firebase 요청에 타임아웃을 거는 래퍼 함수 (15초 제한)
+ */
+const withTimeout = (promise, ms = 15000) => {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('TIMEOUT')), ms)
+  );
+  return Promise.race([promise, timeout]);
+};
+
 const processedIds = new Set();
 let unsubscribeSnapshot = null;
-let isStarted = false; // 중복 초기화 방지
+let lastHeartbeatTime = 0;
+let lastResetTime = Date.now();
+const HEARTBEAT_INTERVAL = 5 * 60 * 1000;  // 5분으로 단축 (더 잦은 활성 유지)
+const RESET_INTERVAL = 60 * 60 * 1000;    // 1시간
+
+const sendHeartbeat = async () => {
+  try {
+    console.log('[Background] Attempting heartbeat...');
+    const statusRef = doc(db, 'service_status', 'main_terminal');
+    await withTimeout(setDoc(statusRef, {
+      lastActive: serverTimestamp(),
+      platform: Platform.OS,
+      updatedAt: new Date().toISOString(),
+      status: 'running',
+      loopCount: global.loopCount || 0
+    }, { merge: true }));
+    lastHeartbeatTime = Date.now();
+    console.log('[Background] Heartbeat sent successfully.');
+  } catch (e) {
+    console.error('[Background] Heartbeat error:', e.message);
+    // 타임아웃이나 에러 시에도 루프가 멈추지 않도록 다음엔 그냥 넘어감
+  }
+};
+
+const initSnapshotListener = (q) => {
+  if (unsubscribeSnapshot) {
+    unsubscribeSnapshot();
+  }
+
+  console.log('[Background] Initializing Firestore Snapshot Listener...');
+  unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+    snapshot.docChanges().forEach(async (change) => {
+      if (change.type === 'added' || change.type === 'modified') {
+        await processRecord({ id: change.doc.id, ...change.doc.data() });
+      }
+    });
+  }, (err) => {
+    console.error('[Background] Snapshot listener error:', err);
+  });
+};
 
 const processRecord = async (data) => {
   // 미처리고 처음 보는 id인 경우만 발송 시도
@@ -31,12 +83,10 @@ const processRecord = async (data) => {
           console.error('[Background] processed 업데이트 오류:', e);
         }
       } else {
-        // 발송 실패 시 다음에 다시 시도할 수 있도록 Set에서 제거
-        processedIds.add(data.id); // 일단 추가된 상태 유지 (중복 발송 방지 우선)
-        // 실제로는 실패 시 재시도 로직이 필요할 수 있으나, 여기서는 안전을 위해 Set 유지
+        // 발송 실패 시 나중에 다시 시도할 수 있도록 Set에서 한시적 보관 후 제거하는 등의 로직 가능
+        // 현재는 중복 발송 방지를 위해 유지
       }
     } else {
-      // 폰 번호가 없을 땐 바로 처리 플래그만 켬
       try {
         await updateDoc(doc(db, 'attendance', data.id), { processed: true });
       } catch (e) {}
@@ -46,42 +96,55 @@ const processRecord = async (data) => {
 
 const backgroundTask = async (taskDataArguments) => {
   const { delay } = taskDataArguments;
+  global.loopCount = 0;
 
-  // 네이티브 모듈 및 브릿지 초기화 대기
-  await sleep(1500);
+  // 초기 지연 (시스템 안정화 대기)
+  await sleep(2000);
 
   const attRef = collection(db, 'attendance');
   const q = query(attRef, where('processed', '==', false));
 
-  // 1. 실시간 리스너 설정
-  if (unsubscribeSnapshot) {
-    unsubscribeSnapshot();
-  }
+  // 1. 초기 하트비트 및 리스너 설정
+  await sendHeartbeat();
+  initSnapshotListener(q);
 
-  unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-    snapshot.docChanges().forEach(async (change) => {
-      if (change.type === 'added' || change.type === 'modified') {
-        await processRecord({ id: change.doc.id, ...change.doc.data() });
-      }
-    });
-  });
-
-  // 2. 무한 루프 (주기적 폴링 폴백 포함)
+  // 2. 무한 루프 (주기적 폴링 및 유지관리)
   await new Promise(async (resolve) => {
     for (let i = 0; BackgroundService.isRunning(); i++) {
-        // 약 30초마다(i%10, delay=3000) 강제 데이터 조회 실행
-        // onSnapshot이 잠들었을 경우를 대비한 안전장치
+        global.loopCount = i;
+        const now = Date.now();
+
+        // [기능 1] 하트비트 (15분마다)
+        if (now - lastHeartbeatTime > HEARTBEAT_INTERVAL) {
+          await sendHeartbeat();
+        }
+
+        // [기능 2] 리스너 재설정 (1시간마다) 
+        if (now - lastResetTime > RESET_INTERVAL) {
+          console.log('[Background] Periodic Reset: Re-initializing listeners...');
+          initSnapshotListener(q);
+          lastResetTime = now;
+          
+          const hours = new Date().getHours();
+          if (hours === 4) {
+            console.log('[Background] Daily Cleanup: Clearing processed cache');
+            processedIds.clear();
+          }
+        }
+
+        // [기능 3] 폴링 폴백 (약 30초마다) - 타임아웃 추가로 무한대기 방지
         if (i > 0 && i % 10 === 0) {
           try {
             console.log(`[Background] Polling Fallback Check (#${i})`);
-            const snapshot = await getDocs(q);
+            const snapshot = await withTimeout(getDocs(q));
             for (const d of snapshot.docs) {
               await processRecord({ id: d.id, ...d.data() });
             }
           } catch (e) {
-            console.error('[Background] Polling error:', e);
+            console.error('[Background] Polling/Process error:', e.message);
           }
         }
+
         await sleep(delay);
     }
     
@@ -93,16 +156,17 @@ const backgroundTask = async (taskDataArguments) => {
   });
 };
 
+
 const options = {
-  taskName: 'AcademySmsTask',
-  taskTitle: '[미래학원] 출결 문자 자동발송',
-  taskDesc: '백그라운드에서 실시간 출결 현황을 감시 중입니다.',
+  taskName: 'AcademySmsTaskV2',
+  taskTitle: '[미래학원] 상시 출결 감시 중',
+  taskDesc: '실시간으로 출결을 감시하며 SMS를 발송하고 있습니다.',
   taskIcon: {
-    name: 'ic_launcher', // 확실히 존재하는 아이콘명으로 원복
+    name: 'ic_launcher',
     type: 'mipmap',
   },
   color: '#C62828',
-  linkingURI: 'com.mirae.academyatt://', // 알림 터치 시 앱으로 복귀
+  linkingURI: 'com.mirae.academyatt://',
   parameters: {
     delay: 3000,
   },
@@ -114,6 +178,8 @@ export const startSmsBackgroundService = async () => {
     if (!BackgroundService.isRunning()) {
       await BackgroundService.start(backgroundTask, options);
       console.log('Background SMS service started successfully.');
+    } else {
+      console.log('Background service is already running.');
     }
   } catch (e) {
     console.error('Error starting bg service', e);
@@ -135,3 +201,4 @@ export const stopSmsBackgroundService = async () => {
     console.error('Error stopping bg service', e);
   }
 };
+
