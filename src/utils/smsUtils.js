@@ -7,8 +7,9 @@ export const buildCheckinMessage = (name, time) =>
   `[미래학원] ${time} ${name} 원생이 등원하였습니다. 최선을 다해 지도하겠습니다.`;
 
 // 귀가 문자 메시지 생성
-export const buildCheckoutMessage = (name, time) =>
-  `[미래학원] ${time} ${name} 원생이 공부를 마치고 귀가할 예정입니다.`;
+export const buildCheckoutMessage = (name, time) => {
+  return `[미래학원] ${time} ${name} 원생이 공부를 마치고 귀가할 예정입니다.`;
+};
 
 // 생일 문자 메시지 생성
 export const buildBirthdayMessage = (name) => {

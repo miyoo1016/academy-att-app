@@ -63,6 +63,85 @@ const initSnapshotListener = (q) => {
   });
 };
 
+/**
+ * [추가] 생일 축하 메시지 자동 발송 로직
+ * 매일 오전 9시 이후 단 한 번 실행되도록 설계
+ */
+let lastBirthdayCheckDate = '';
+
+const checkBirthdaysDaily = async () => {
+  const now = new Date();
+  const hours = now.getHours();
+  const todayStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+  // 오전 9시 이전이거나 이미 오늘 체크했다면 조기 리턴
+  if (hours < 9 || lastBirthdayCheckDate === todayStr) return;
+
+  try {
+    console.log('[Background] Checking birthdays for today:', todayStr);
+    
+    // 1. 오늘 이미 다른 기기나 프로세스에서 발송했는지 확인 (Firestore 락)
+    const logRef = doc(db, 'birthday_logs', todayStr);
+    const logSnap = await getDoc(logRef);
+    if (logSnap.exists()) {
+      lastBirthdayCheckDate = todayStr;
+      console.log('[Background] Birthdays already processed by another instance.');
+      return;
+    }
+
+    // 2. 생일자 조회 (이번 달, 이번 일)
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const studentsRef = collection(db, 'students');
+    const q = query(studentsRef, 
+      where('birthMonth', '==', month), 
+      where('birthDay', '==', day), 
+      where('isActive', '==', true)
+    );
+    
+    const snapshot = await withTimeout(getDocs(q));
+    if (snapshot.empty) {
+      await setDoc(logRef, { checked: true, sentCount: 0, timestamp: serverTimestamp() });
+      lastBirthdayCheckDate = todayStr;
+      console.log('[Background] No birthdays today.');
+      return;
+    }
+
+    // 3. 순차 발송
+    let sentCount = 0;
+    for (const studentDoc of snapshot.docs) {
+      const student = studentDoc.data();
+      const msg = buildBirthdayMessage(student.name);
+      
+      const phones = [];
+      if (student.phone) phones.push(student.phone);
+      if (student.parents) {
+        student.parents.forEach(p => { if (p.phone) phones.push(p.phone); });
+      }
+
+      if (phones.length > 0) {
+        console.log(`[Background] Sending Birthday SMS to ${student.name}...`);
+        await sendAttendanceSMS(phones, msg);
+        sentCount++;
+      }
+    }
+
+    // 4. 발송 완료 기록
+    await setDoc(logRef, { 
+      checked: true, 
+      sentCount, 
+      timestamp: serverTimestamp(),
+      masterDevice: Platform.OS 
+    });
+    
+    lastBirthdayCheckDate = todayStr;
+    console.log(`[Background] Completed birthday check. Sent: ${sentCount}`);
+
+  } catch (e) {
+    console.error('[Background] Birthday check error:', e.message);
+  }
+};
+
 const processRecord = async (data) => {
   // 미처리고 처음 보는 id인 경우만 발송 시도
   if (!data.processed && !processedIds.has(data.id)) {
@@ -136,6 +215,10 @@ const backgroundTask = async (taskDataArguments) => {
         if (i > 0 && i % 10 === 0) {
           try {
             console.log(`[Background] Polling Fallback Check (#${i})`);
+            
+            // 생일 체크도 폴링 주기에 맞춰 수행
+            await checkBirthdaysDaily();
+
             const snapshot = await withTimeout(getDocs(q));
             for (const d of snapshot.docs) {
               await processRecord({ id: d.id, ...d.data() });

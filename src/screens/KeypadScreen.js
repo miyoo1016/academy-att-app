@@ -184,6 +184,18 @@ export default function KeypadScreen() {
       const type = !lastRecord || lastRecord.type === 'checkout' ? 'checkin' : 'checkout';
       const now = new Date();
       const timeStr = formatTimeForSMS(now);
+      
+      let studyDuration = '';
+      if (type === 'checkout' && lastRecord && lastRecord.type === 'checkin' && lastRecord.timestamp) {
+        const checkinTime = lastRecord.timestamp.toDate ? lastRecord.timestamp.toDate() : new Date(lastRecord.timestamp.seconds * 1000);
+        const diffMs = now - checkinTime;
+        const diffMin = Math.floor(diffMs / (1000 * 60));
+        const hours = Math.floor(diffMin / 60);
+        const mins = diffMin % 60;
+        
+        if (hours > 0) studyDuration += `${hours}시간 `;
+        studyDuration += `${mins}분`;
+      }
 
       const recordRef = await addDoc(collection(db, 'attendance'), {
         studentId: student.id,
@@ -194,51 +206,21 @@ export default function KeypadScreen() {
         time: timeStr,
         timestamp: serverTimestamp(),
         processed: false,
+        studyDuration: studyDuration || null, // 귀가 시에만 값이 존재
       });
 
       const typeLabel = type === 'checkin' ? '등원' : '귀가';
-      let displayMsg = `${student.name} 원생 ${typeLabel} ✓`;
+      let displayMsg = `${student.name} 원생\n${typeLabel} 완료 ✓`;
 
-      if (type === 'checkout' && lastRecord && lastRecord.type === 'checkin' && lastRecord.timestamp) {
-        const checkinTime = lastRecord.timestamp.toDate ? lastRecord.timestamp.toDate() : new Date(lastRecord.timestamp.seconds * 1000);
-        const diffMs = now - checkinTime;
-        const diffMin = Math.floor(diffMs / (1000 * 60));
-        const hours = Math.floor(diffMin / 60);
-        const mins = diffMin % 60;
-        
-        let durationStr = '';
-        if (hours > 0) durationStr += `${hours}시간 `;
-        durationStr += `${mins}분`;
-        
-        displayMsg = `${student.name} 귀가 ✓\n(공부시간: ${durationStr})`;
+      if (studyDuration) {
+        displayMsg = `${student.name} 귀가 완료 ✓\n(학습시간: ${studyDuration})`;
       }
 
       showStatus(displayMsg, 'success');
 
-      // 3. 문자 발송 (사용자 클릭 이벤트 직계존속으로 실행하여 브라우저 로킹 방지)
-      const phones = student.parents ? student.parents.map(p => p.phone).filter(Boolean) : [];
-      if (phones.length > 0) {
-        const msg = type === 'checkin'
-          ? buildCheckinMessage(student.name, timeStr)
-          : buildCheckoutMessage(student.name, timeStr);
-        
-        // 브라우저가 '사용자 제스처'로 인식하도록 최대한 빨리 호출
-        const recordId = recordRef.id;
-        console.log(`[Keypad] SMS 발송 시도: ${phones.join(', ')}`);
-        
-        sendAttendanceSMS(phones, msg).then(sent => {
-          if (sent) {
-            updateDoc(doc(db, 'attendance', recordId), { processed: true });
-          } else {
-            console.warn('[Keypad] SMS 발송 반환값이 false입니다.');
-          }
-        }).catch(err => {
-          console.error('문자 발송 실패:', err);
-          if (Platform.OS === 'web') {
-            Alert.alert('문자 발송 오류', '브라우저에서 문자 앱을 열지 못했습니다. 팝업 차단 설정을 확인하거나 안드로이드 전용 앱을 사용해 주세요.');
-          }
-        });
-      }
+      // 3. 문자 발송은 백그라운드 서비스에서 전용으로 처리하도록 변경
+      // (중복 발송 방지 및 서비스 안정성 확보)
+      console.log(`[Keypad] 기록 저장됨: ${student.name}. (문자 발송은 백그라운드 서비스가 처리합니다)`);
 
     } catch (error) {
       console.error('출결 처리 오류:', error);
@@ -356,9 +338,11 @@ export default function KeypadScreen() {
 
           <View style={styles.statusArea}>
             {statusMsg.text ? (
-              <Text style={[styles.statusText, statusMsg.type === 'error' ? styles.errorText : styles.successText]}>
-                {statusMsg.text}
-              </Text>
+              <View style={[styles.statusCard, statusMsg.type === 'error' ? styles.errorCard : styles.normalCard]}>
+                <Text style={styles.statusText}>
+                  {statusMsg.text}
+                </Text>
+              </View>
             ) : (
               <TouchableOpacity onPress={openLog} style={styles.logLinkWrapper}>
                 <Text style={styles.logLink}>최근 출결 확인</Text>
@@ -497,17 +481,55 @@ const styles = StyleSheet.create({
   dot: { width: 24, height: 24, borderRadius: 12 },
 
   statusArea: {
-    height: 60,
+    minHeight: 120,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 15,
+    paddingHorizontal: 10,
   },
-  statusText: { textAlign: 'center', fontSize: 18, fontWeight: 'bold' },
-  successText: { color: '#A5D6A7' },
-  errorText: { color: '#FFCDD2' },
+  statusCard: {
+    width: '100%',
+    paddingVertical: 20,
+    paddingHorizontal: 25,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  normalCard: { 
+    backgroundColor: '#fff', 
+    borderColor: '#eee',
+    elevation: 4,
+    ...Platform.select({
+      web: { boxShadow: '0 4px 15px rgba(0,0,0,0.1)' },
+    }),
+  },
+  errorCard: { 
+    backgroundColor: '#FFF9C4', 
+    borderColor: '#FBC02D',
+    elevation: 8,
+    ...Platform.select({
+      web: { boxShadow: '0 8px 25px rgba(0,0,0,0.2)' },
+    }),
+  },
   
-  logLinkWrapper: { marginTop: 5 },
-  logLink: { color: '#fff', fontSize: 15, textDecorationLine: 'underline', opacity: 0.8 },
+  statusText: { 
+    textAlign: 'center', 
+    fontSize: 48, 
+    fontWeight: 'bold', 
+    color: '#1a1a1a',
+    lineHeight: 58,
+  },
+  
+  logLinkWrapper: { 
+    marginTop: 10, 
+    backgroundColor: 'rgba(0,0,0,0.2)', 
+    paddingHorizontal: 20, 
+    paddingVertical: 10, 
+    borderRadius: 20 
+  },
+  logLink: { color: '#fff', fontSize: 18, textDecorationLine: 'underline' },
 
   padWrapper: {
     flex: 1,

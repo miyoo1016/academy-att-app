@@ -42,16 +42,9 @@ export default function DashboardScreen({ navigation }) {
     const q = query(attRef, where('date', '==', today));
 
     const unsubscribeAtt = onSnapshot(q, snapshot => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const record = { id: change.doc.id, ...change.doc.data() };
-          // 미처리된 데이터인 경우 문자 발송 시도
-          if (!record.processed) {
-            processSMS(record);
-          }
-        }
-      });
-
+      // 대시보드에서는 목록만 갱신하고 자동 발송은 하지 않습니다. 
+      // (백그라운드 서비스가 담당)
+      
       const all = [];
       snapshot.forEach(d => all.push({ id: d.id, ...d.data() }));
       all.sort((a, b) => {
@@ -72,8 +65,6 @@ export default function DashboardScreen({ navigation }) {
         });
       }
     });
-
-    checkBirthdays();
 
     const serviceCheckInterval = setInterval(() => {
       setIsServiceRunning(BackgroundService.isRunning());
@@ -96,61 +87,7 @@ export default function DashboardScreen({ navigation }) {
     return `${Math.floor(diff / 3600)}시간 전`;
   };
 
-  const checkBirthdays = async () => {
-    const now = new Date();
-    // 오전 8시 이후부터 작동
-    if (now.getHours() < 8) return;
-
-    const todayStr = formatDateForDB();
-    const month = now.getMonth() + 1;
-    const day = now.getDate();
-
-    try {
-      // 오늘 이미 발송했는지 체크
-      const logRef = doc(db, 'birthday_logs', todayStr);
-      const logSnap = await getDoc(logRef);
-      if (logSnap.exists()) return;
-
-      // 생일자 조회
-      const studentsRef = collection(db, 'students');
-      const q = query(studentsRef, where('birthMonth', '==', month), where('birthDay', '==', day), where('isActive', '==', true));
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        await setDoc(logRef, { checked: true, sentCount: 0 });
-        return;
-      }
-
-      let sentCount = 0;
-      for (const studentDoc of snapshot.docs) {
-        const student = studentDoc.data();
-        const msg = buildBirthdayMessage(student.name);
-        
-        const phones = [];
-        if (student.phone) phones.push(student.phone);
-        if (student.parents) {
-          student.parents.forEach(p => { if (p.phone) phones.push(p.phone); });
-        }
-
-        if (phones.length > 0) {
-          await sendAttendanceSMS(phones, msg);
-          sentCount++;
-        }
-      }
-
-      await setDoc(logRef, { checked: true, sentCount, timestamp: serverTimestamp() });
-      if (sentCount > 0) {
-        showAlert('생일 자동 발송', `오늘 생일인 ${sentCount}명의 학생 및 학부모님께 축하 메시지를 보냈습니다.`);
-      }
-    } catch (e) {
-      console.error('생일 체크 오류:', e);
-    }
-  };
-
-  const processSMS = async (record) => {
-    if (processedIds.current.has(record.id)) return;
-    processedIds.current.add(record.id);
-
+  const sendManualSMS = async (record) => {
     const phones = record.parentPhones || [];
     if (phones.length === 0) {
       await markProcessed(record.id);
@@ -161,9 +98,11 @@ export default function DashboardScreen({ navigation }) {
       ? buildCheckinMessage(record.studentName, record.time)
       : buildCheckoutMessage(record.studentName, record.time);
 
+    console.log(`[Dashboard] Manual Resend for ${record.studentName}`);
     const sent = await sendAttendanceSMS(phones, msg);
     if (sent) {
       await markProcessed(record.id);
+      showAlert('성공', '문자가 성공적으로 발송되었습니다.');
     }
   };
 
@@ -181,11 +120,7 @@ export default function DashboardScreen({ navigation }) {
       showAlert('오류', '등록된 학부모 연락처가 없습니다.');
       return;
     }
-    const msg = record.type === 'checkin'
-      ? buildCheckinMessage(record.studentName, record.time)
-      : buildCheckoutMessage(record.studentName, record.time);
-    processedIds.current.delete(record.id);
-    processSMS({ ...record });
+    sendManualSMS(record);
   };
 
   const handleSwitchToKeypad = async () => {
