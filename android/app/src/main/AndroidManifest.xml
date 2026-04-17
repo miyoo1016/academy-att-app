@@ -11,6 +11,11 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+  <uses-permission android:name="android.permission.REORDER_TASKS"/>
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+  <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -41,5 +46,45 @@
       android:foregroundServiceType="dataSync"
       android:stopWithTask="false"
       android:exported="false" />
+
+    <!-- 순수 네이티브 감시 서비스: JS Thread 독립 - 30초마다 JS 서비스 생존 확인 -->
+    <service
+      android:name=".SmsWatchdogService"
+      android:foregroundServiceType="dataSync"
+      android:stopWithTask="false"
+      android:exported="false" />
+
+    <!-- 기기 재부팅 후 자동 시작 -->
+    <receiver
+      android:name=".BootReceiver"
+      android:exported="true"
+      android:enabled="true">
+      <intent-filter android:priority="1000">
+        <action android:name="android.intent.action.BOOT_COMPLETED"/>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+      </intent-filter>
+    </receiver>
+
+    <!-- AlarmManager 기반 5분 주기 감시 Receiver (Doze 모드 관통) -->
+    <!-- Android 10+ startActivity 차단 문제 우회용 핵심 컴포넌트 -->
+    <receiver
+      android:name=".SmsAlarmReceiver"
+      android:exported="false"
+      android:enabled="true">
+      <intent-filter>
+        <action android:name="com.mirae.academyatt.WATCHDOG_ALARM"/>
+        <action android:name="android.intent.action.BOOT_COMPLETED"/>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+      </intent-filter>
+    </receiver>
+
+    <!-- FCM 수신 서비스: JS 독립적으로 백그라운드에서 SMS 발송 -->
+    <service
+      android:name=".FcmService"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
   </application>
 </manifest>

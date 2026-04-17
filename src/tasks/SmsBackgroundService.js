@@ -1,17 +1,18 @@
 import BackgroundService from 'react-native-background-actions';
 import { Platform } from 'react-native';
-import { 
-  collection, query, where, onSnapshot, doc, updateDoc, 
-  getDocs, setDoc, serverTimestamp, getDoc 
+import {
+  collection, query, where, doc, updateDoc,
+  getDocs, setDoc, serverTimestamp, getDoc,
+  enableNetwork, disableNetwork, getDocsFromServer
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { buildCheckinMessage, buildCheckoutMessage, sendAttendanceSMS } from '../utils/smsUtils';
+import { buildCheckinMessage, buildCheckoutMessage, buildBirthdayMessage, sendAttendanceSMS } from '../utils/smsUtils';
+import { pingHeartbeat } from '../utils/NativeHeartbeat';
 
-const sleep = (time) => new Promise((resolve) => setTimeout(() => resolve(), time));
+const sleep = (time) => new Promise((resolve) => setTimeout(resolve, time));
 
 /**
- * 프로젝트의 절대적인 기동성을 위해 
- * Firebase 요청에 타임아웃을 거는 래퍼 함수 (15초 제한)
+ * Firebase 요청에 타임아웃을 거는 래퍼
  */
 const withTimeout = (promise, ms = 15000) => {
   const timeout = new Promise((_, reject) =>
@@ -20,239 +21,159 @@ const withTimeout = (promise, ms = 15000) => {
   return Promise.race([promise, timeout]);
 };
 
+// ─────────────────────────────────────────────────────────────────
+// 전역 상태
+// ─────────────────────────────────────────────────────────────────
 const processedIds = new Set();
-let unsubscribeSnapshot = null;
-let lastHeartbeatTime = 0;
-let lastResetTime = Date.now();
-const HEARTBEAT_INTERVAL = 5 * 60 * 1000;  // 5분으로 단축 (더 잦은 활성 유지)
-const RESET_INTERVAL = 60 * 60 * 1000;    // 1시간
+let lastHeartbeatTime    = 0;
+let lastResetTime        = Date.now();
+let lastBirthdayCheckDate = '';
 
+// ── 핵심 타이머 설정 (FCM 도입으로 대폭 완화) ──────────────────────
+const HEARTBEAT_INTERVAL  = 15 * 60 * 1000;   // 15분마다 Firebase 생존 신호
+const POLLING_INTERVAL    = 2 * 60 * 1000;    // 2분마다 폴링 폴백 (클로드 조언에 따라 복구)
+const RESET_INTERVAL      = 60 * 60 * 1000;   // 1시간마다 리스너/상태 리셋
+
+// ─────────────────────────────────────────────────────────────────
+// 하트비트 (Firebase에 생존 신호 + 네이티브 SharedPreferences ping)
+// ─────────────────────────────────────────────────────────────────
 const sendHeartbeat = async () => {
   try {
-    console.log('[Background] Attempting heartbeat...');
     const statusRef = doc(db, 'service_status', 'main_terminal');
     await withTimeout(setDoc(statusRef, {
       lastActive: serverTimestamp(),
       platform: Platform.OS,
       updatedAt: new Date().toISOString(),
-      status: 'running',
-      loopCount: global.loopCount || 0
+      status: 'running_fcm_hybrid',
     }, { merge: true }));
     lastHeartbeatTime = Date.now();
-    console.log('[Background] Heartbeat sent successfully.');
   } catch (e) {
-    console.error('[Background] Heartbeat error:', e.message);
-    // 타임아웃이나 에러 시에도 루프가 멈추지 않도록 다음엔 그냥 넘어감
+    console.error('[BgService] Heartbeat error:', e.message);
   }
 };
 
-const initSnapshotListener = (q) => {
-  if (unsubscribeSnapshot) {
-    unsubscribeSnapshot();
-  }
+// ─────────────────────────────────────────────────────────────────
+// 폴링 폴백 (최종 방어선)
+// ─────────────────────────────────────────────────────────────────
+const runPollingFallback = async (q) => {
+  try {
+    console.log('[BgService] 폴링 실행 (FCM 미발송분 체크)...');
+    const snapshot = await withTimeout(getDocsFromServer(q), 20000);
 
-  console.log('[Background] Initializing Firestore Snapshot Listener...');
-  unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-    snapshot.docChanges().forEach(async (change) => {
-      if (change.type === 'added' || change.type === 'modified') {
-        await processRecord({ id: change.doc.id, ...change.doc.data() });
-      }
-    });
-  }, (err) => {
-    console.error('[Background] Snapshot listener error:', err);
-  });
+    for (const d of snapshot.docs) {
+       // FCM이 이미 처리했을 것이므로, 여기서 다시 처리되더라도 processRecord 에서 processed 필드 체크함
+       const data = d.data();
+       if (!data.processed) {
+          // JS에서도 문자를 보낼 수 있게 유지 (이중 안전장치)
+          const msg = data.type === 'checkin'
+            ? buildCheckinMessage(data.studentName, data.time)
+            : buildCheckoutMessage(data.studentName, data.time);
+          
+          const phones = data.parentPhones || [];
+          if (phones.length > 0) {
+             const sent = await sendAttendanceSMS(phones, msg);
+             if (sent) {
+                await updateDoc(doc(db, 'attendance', d.id), { processed: true });
+             }
+          }
+       }
+    }
+  } catch (e) {
+    console.error('[BgService] 폴링 실패:', e.message);
+  }
 };
 
-/**
- * [추가] 생일 축하 메시지 자동 발송 로직
- * 매일 오전 9시 이후 단 한 번 실행되도록 설계
- */
-let lastBirthdayCheckDate = '';
-
+// ─────────────────────────────────────────────────────────────────
+// 생일 체크 (하루 1회)
+// ─────────────────────────────────────────────────────────────────
 const checkBirthdaysDaily = async () => {
   const now = new Date();
-  const hours = now.getHours();
-  const todayStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  if (now.getHours() < 9 || now.getHours() > 21) return;
 
-  // 오전 9시 이전이거나 이미 오늘 체크했다면 조기 리턴
-  if (hours < 9 || lastBirthdayCheckDate === todayStr) return;
+  const todayStr = now.toISOString().split('T')[0];
+  if (lastBirthdayCheckDate === todayStr) return;
 
   try {
-    console.log('[Background] Checking birthdays for today:', todayStr);
-    
-    // 1. 오늘 이미 다른 기기나 프로세스에서 발송했는지 확인 (Firestore 락)
     const logRef = doc(db, 'birthday_logs', todayStr);
     const logSnap = await getDoc(logRef);
-    if (logSnap.exists()) {
-      lastBirthdayCheckDate = todayStr;
-      console.log('[Background] Birthdays already processed by another instance.');
-      return;
-    }
+    if (logSnap.exists()) { lastBirthdayCheckDate = todayStr; return; }
 
-    // 2. 생일자 조회 (이번 달, 이번 일)
     const month = now.getMonth() + 1;
-    const day = now.getDate();
-    const studentsRef = collection(db, 'students');
-    const q = query(studentsRef, 
-      where('birthMonth', '==', month), 
-      where('birthDay', '==', day), 
-      where('isActive', '==', true)
+    const day   = now.getDate();
+    const q = query(collection(db, 'students'),
+      where('birthMonth', '==', month),
+      where('birthDay',   '==', day),
+      where('isActive',   '==', true)
     );
-    
-    const snapshot = await withTimeout(getDocs(q));
-    if (snapshot.empty) {
-      await setDoc(logRef, { checked: true, sentCount: 0, timestamp: serverTimestamp() });
-      lastBirthdayCheckDate = todayStr;
-      console.log('[Background] No birthdays today.');
-      return;
-    }
 
-    // 3. 순차 발송
+    const snapshot = await getDocs(q);
     let sentCount = 0;
+
     for (const studentDoc of snapshot.docs) {
       const student = studentDoc.data();
       const msg = buildBirthdayMessage(student.name);
-      
       const phones = [];
       if (student.phone) phones.push(student.phone);
-      if (student.parents) {
-        student.parents.forEach(p => { if (p.phone) phones.push(p.phone); });
-      }
-
+      student.parents?.forEach(p => { if (p.phone) phones.push(p.phone); });
       if (phones.length > 0) {
-        console.log(`[Background] Sending Birthday SMS to ${student.name}...`);
         await sendAttendanceSMS(phones, msg);
         sentCount++;
       }
     }
 
-    // 4. 발송 완료 기록
-    await setDoc(logRef, { 
-      checked: true, 
-      sentCount, 
-      timestamp: serverTimestamp(),
-      masterDevice: Platform.OS 
-    });
-    
+    await setDoc(logRef, { checked: true, sentCount, timestamp: serverTimestamp() });
     lastBirthdayCheckDate = todayStr;
-    console.log(`[Background] Completed birthday check. Sent: ${sentCount}`);
-
+    console.log(`[BgService] 생일 체크 완료: ${sentCount}`);
   } catch (e) {
-    console.error('[Background] Birthday check error:', e.message);
+    console.error('[BgService] 생일 체크 오류:', e.message);
   }
 };
 
-const processRecord = async (data) => {
-  // 미처리고 처음 보는 id인 경우만 발송 시도
-  if (!data.processed && !processedIds.has(data.id)) {
-    processedIds.add(data.id);
-    
-    const phones = data.parentPhones || [];
-    if (phones.length > 0) {
-      const msg = data.type === 'checkin'
-        ? buildCheckinMessage(data.studentName, data.time)
-        : buildCheckoutMessage(data.studentName, data.time);
-      
-      console.log(`[Background] Sending SMS for ${data.studentName}...`);
-      const sent = await sendAttendanceSMS(phones, msg);
-      if (sent) {
-        try {
-          await updateDoc(doc(db, 'attendance', data.id), { processed: true });
-        } catch (e) {
-          console.error('[Background] processed 업데이트 오류:', e);
-        }
-      } else {
-        // 발송 실패 시 나중에 다시 시도할 수 있도록 Set에서 한시적 보관 후 제거하는 등의 로직 가능
-        // 현재는 중복 발송 방지를 위해 유지
-      }
-    } else {
-      try {
-        await updateDoc(doc(db, 'attendance', data.id), { processed: true });
-      } catch (e) {}
-    }
-  }
-};
-
+// ─────────────────────────────────────────────────────────────────
+// 메인 백그라운드 태스크
+// ─────────────────────────────────────────────────────────────────
 const backgroundTask = async (taskDataArguments) => {
   const { delay } = taskDataArguments;
-  global.loopCount = 0;
-
-  // 초기 지연 (시스템 안정화 대기)
-  await sleep(2000);
-
   const attRef = collection(db, 'attendance');
   const q = query(attRef, where('processed', '==', false));
 
-  // 1. 초기 하트비트 및 리스너 설정
   await sendHeartbeat();
-  initSnapshotListener(q);
 
-  // 2. 무한 루프 (주기적 폴링 및 유지관리)
-  await new Promise(async (resolve) => {
-    for (let i = 0; BackgroundService.isRunning(); i++) {
-        global.loopCount = i;
-        const now = Date.now();
+  for (let i = 0; BackgroundService.isRunning(); i++) {
+    const now = Date.now();
 
-        // [기능 1] 하트비트 (15분마다)
-        if (now - lastHeartbeatTime > HEARTBEAT_INTERVAL) {
-          await sendHeartbeat();
-        }
+    // 1. 네이티브 하트비트 (Watchdog용)
+    pingHeartbeat();
 
-        // [기능 2] 리스너 재설정 (1시간마다) 
-        if (now - lastResetTime > RESET_INTERVAL) {
-          console.log('[Background] Periodic Reset: Re-initializing listeners...');
-          initSnapshotListener(q);
-          lastResetTime = now;
-          
-          const hours = new Date().getHours();
-          if (hours === 4) {
-            console.log('[Background] Daily Cleanup: Clearing processed cache');
-            processedIds.clear();
-          }
-        }
-
-        // [기능 3] 폴링 폴백 (약 30초마다) - 타임아웃 추가로 무한대기 방지
-        if (i > 0 && i % 10 === 0) {
-          try {
-            console.log(`[Background] Polling Fallback Check (#${i})`);
-            
-            // 생일 체크도 폴링 주기에 맞춰 수행
-            await checkBirthdaysDaily();
-
-            const snapshot = await withTimeout(getDocs(q));
-            for (const d of snapshot.docs) {
-              await processRecord({ id: d.id, ...d.data() });
-            }
-          } catch (e) {
-            console.error('[Background] Polling/Process error:', e.message);
-          }
-        }
-
-        await sleep(delay);
+    // 2. Firebase 하트비트 (15분)
+    if (now - lastHeartbeatTime > HEARTBEAT_INTERVAL) {
+      await sendHeartbeat();
     }
-    
-    if (unsubscribeSnapshot) {
-      unsubscribeSnapshot();
-      unsubscribeSnapshot = null;
+
+    // 3. 폴링 폴백 (시작 즉시 1회 + 10분마다)
+    if (i === 0 || (i > 0 && (i * delay) % POLLING_INTERVAL < delay)) {
+      await runPollingFallback(q);
+      await checkBirthdaysDaily();
     }
-    resolve();
-  });
+
+    // 4. 상태 초기화 (1시간)
+    if (now - lastResetTime > RESET_INTERVAL) {
+      processedIds.clear();
+      lastResetTime = now;
+    }
+
+    await sleep(delay);
+  }
 };
 
-
 const options = {
-  taskName: 'AcademySmsTaskV2',
-  taskTitle: '[미래학원] 상시 출결 감시 중',
-  taskDesc: '실시간으로 출결을 감시하며 SMS를 발송하고 있습니다.',
-  taskIcon: {
-    name: 'ic_launcher',
-    type: 'mipmap',
-  },
-  color: '#C62828',
+  taskName: 'AcademyFcmHybridV1',
+  taskTitle: '[미래학원] SMS 서버 정상 가동 중',
+  taskDesc: '24시간 출결 감시 중 (지우지 마세요)',
+  taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+  color: '#2E7D32',
   linkingURI: 'com.mirae.academyatt://',
-  parameters: {
-    delay: 3000,
-  },
+  parameters: { delay: 10000 },
 };
 
 export const startSmsBackgroundService = async () => {
@@ -260,12 +181,10 @@ export const startSmsBackgroundService = async () => {
   try {
     if (!BackgroundService.isRunning()) {
       await BackgroundService.start(backgroundTask, options);
-      console.log('Background SMS service started successfully.');
-    } else {
-      console.log('Background service is already running.');
+      console.log('[BgService] FCM 하이브리드 서비스 시작');
     }
   } catch (e) {
-    console.error('Error starting bg service', e);
+    console.error('[BgService] 서비스 시작 실패:', e);
   }
 };
 
@@ -273,15 +192,9 @@ export const stopSmsBackgroundService = async () => {
   if (Platform.OS !== 'android') return;
   try {
     if (BackgroundService.isRunning()) {
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
-        unsubscribeSnapshot = null;
-      }
       await BackgroundService.stop();
-      console.log('Background SMS service stopped.');
     }
   } catch (e) {
-    console.error('Error stopping bg service', e);
+    console.error('[BgService] 서비스 중지 실패:', e);
   }
 };
-

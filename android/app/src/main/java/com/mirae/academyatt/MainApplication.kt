@@ -8,6 +8,8 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactNativeHost
 import com.facebook.react.ReactPackage
 import com.facebook.react.ReactHost
+import com.mirae.academyatt.sms.DirectSmsPackage
+
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.soloader.SoLoader
@@ -23,7 +25,8 @@ class MainApplication : Application(), ReactApplication {
           override fun getPackages(): List<ReactPackage> {
             val packages = PackageList(this).packages.toMutableList()
             // Packages that cannot be autolinked yet can be added manually here, for example:
-            packages.add(com.mirae.academyatt.sms.DirectSmsPackage())
+            packages.add(DirectSmsPackage())
+            packages.add(HeartbeatPackage())
             return packages
           }
 
@@ -47,6 +50,13 @@ class MainApplication : Application(), ReactApplication {
       load()
     }
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
+
+    // 1. 순수 네이티브 Watchdog 서비스 시작 (30초 주기 감시)
+    SmsWatchdogService.start(this)
+
+    // 2. AlarmManager 기반 감시 시작 (5분 주기, Doze 모드 관통)
+    // Android 10+에서 startActivity가 차단될 때도 독립적으로 동작
+    SmsAlarmReceiver.scheduleRepeatingAlarm(this)
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {

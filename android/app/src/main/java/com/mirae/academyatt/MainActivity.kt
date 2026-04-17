@@ -1,7 +1,9 @@
 package com.mirae.academyatt
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -11,24 +13,47 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+
+  companion object {
+    private const val TAG = "MainActivity"
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
-    // Set the theme to AppTheme BEFORE onCreate to support
-    // coloring the background, status bar, and navigation bar.
-    // This is required for expo-splash-screen.
-    setTheme(R.style.AppTheme);
+    setTheme(R.style.AppTheme)
     super.onCreate(null)
+
+    // 앱이 처음 시작될 때도 RESTART_BG_SERVICE 인텐트 처리
+    intent?.let { handleIntent(it) }
   }
 
   /**
-   * Returns the name of the main component registered from JavaScript. This is used to schedule
-   * rendering of the component.
+   * 이미 실행 중인 앱에 새 Intent가 들어올 때 (singleTask 모드)
+   * SmsAlarmReceiver에서 RESTART_BG_SERVICE를 보내면 여기서 처리됨.
    */
-  override fun getMainComponentName(): String = "main"
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    handleIntent(intent)
+  }
 
   /**
-   * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]
-   * which allows you to enable New Architecture with a single boolean flags [fabricEnabled]
+   * RESTART_BG_SERVICE 액션 처리:
+   * JS 레이어에 이벤트를 보내서 SmsBackgroundService를 재시작시킴.
+   *
+   * 이렇게 하면 JS Thread가 재기동되고 Firebase 재연결이 이루어짐.
    */
+  private fun handleIntent(intent: Intent) {
+    if (intent.action == "com.mirae.academyatt.RESTART_BG_SERVICE") {
+      Log.i(TAG, "🔄 RESTART_BG_SERVICE 인텐트 수신 → JS 이벤트 발송")
+      // React Native EventEmitter로 JS에 신호를 보낼 수도 있지만,
+      // 가장 확실한 방법은 JS가 자체적으로 pingHeartbeat 리셋 후
+      // 서비스를 재시작하는 것.
+      // HeartbeatModule ping 초기화 (강제 재시작 트리거)
+      HeartbeatModule.resetPing(applicationContext)
+    }
+  }
+
+  override fun getMainComponentName(): String = "main"
+
   override fun createReactActivityDelegate(): ReactActivityDelegate {
     return ReactActivityDelegateWrapper(
           this,
@@ -40,22 +65,13 @@ class MainActivity : ReactActivity() {
           ){})
   }
 
-  /**
-    * Align the back button behavior with Android S
-    * where moving root activities to background instead of finishing activities.
-    * @see <a href="https://developer.android.com/reference/android/app/Activity#onBackPressed()">onBackPressed</a>
-    */
   override fun invokeDefaultOnBackPressed() {
       if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
           if (!moveTaskToBack(false)) {
-              // For non-root activities, use the default implementation to finish them.
               super.invokeDefaultOnBackPressed()
           }
           return
       }
-
-      // Use the default back button implementation on Android S
-      // because it's doing more than [Activity.moveTaskToBack] in fact.
       super.invokeDefaultOnBackPressed()
   }
 }
