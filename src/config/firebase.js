@@ -6,7 +6,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCUkD62CH5Z_DNXhWGxP2QAssSML5_QgWk",
+  apiKey: "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs",
   authDomain: "attmirae.firebaseapp.com",
   projectId: "attmirae",
   storageBucket: "attmirae.firebasestorage.app",

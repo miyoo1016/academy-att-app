@@ -52,6 +52,7 @@ export default function KeypadScreen() {
       console.log(`Updated local cache: ${list.length} students.`);
     }, (error) => {
       console.error('학생 명단 실시간 동기화 실패:', error);
+      Alert.alert('통신 오류', '서버와 연결이 원활하지 않습니다. 인터넷 상태를 확인해 주세요.');
     });
 
     return () => unsubscribe();

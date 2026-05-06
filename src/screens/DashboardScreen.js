@@ -5,9 +5,10 @@ import {
   SafeAreaView, FlatList, Alert, Platform
 } from 'react-native';
 import {
-  collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp
+  collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp, addDoc
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import initialStudents from '../config/initial_students.json';
 import { buildCheckinMessage, buildCheckoutMessage, buildBirthdayMessage, sendAttendanceSMS } from '../utils/smsUtils';
 import { formatDateForDB } from '../utils/timeUtils';
 import { startSmsBackgroundService } from '../tasks/SmsBackgroundService';
@@ -70,6 +71,40 @@ export default function DashboardScreen({ navigation }) {
       setIsServiceRunning(BackgroundService.isRunning());
       setRefreshTrigger(prev => prev + 1); // 1초마다 화면 숫자 갱신 강제 발생
     }, 1000);
+
+    const checkAndAutoImportStudents = async () => {
+      try {
+        const isImported = await AsyncStorage.getItem('hasImportedInitialList_v1');
+        if (isImported === 'true') return;
+
+        console.log('[AutoImport] 최초 1회 명단 동기화 시작...');
+        
+        for (const s of initialStudents) {
+          const q = query(collection(db, 'students'), where('pin', '==', s.pin));
+          const snap = await getDocs(q);
+          
+          if (snap.empty) {
+            const data = {
+              name: s.name.trim(),
+              pin: s.pin,
+              phone: '',
+              memo: s.memo,
+              isActive: true,
+              parents: [{ name: '학부모', phone: s.parentPhone.trim() }],
+              createdAt: new Date().toISOString()
+            };
+            await addDoc(collection(db, 'students'), data);
+          }
+        }
+
+        await AsyncStorage.setItem('hasImportedInitialList_v1', 'true');
+        console.log('[AutoImport] 명단 동기화 완료!');
+      } catch (e) {
+        console.error('[AutoImport] 오류:', e);
+      }
+    };
+
+    checkAndAutoImportStudents();
 
     return () => {
       unsubscribeAtt();

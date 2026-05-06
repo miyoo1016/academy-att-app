@@ -24,6 +24,7 @@ export default function StudentsScreen({ navigation }) {
       setStudents(list);
     } catch (e) {
       console.error(e);
+      Alert.alert('오류', '학생 명단을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.');
     }
   };
 
@@ -70,6 +71,7 @@ export default function StudentsScreen({ navigation }) {
           {item.name}
         </Text>
         <Text style={styles.pinText}>PIN: {item.pin}</Text>
+        {item.memo && <Text style={styles.memoText}>{item.memo}</Text>}
         {item.parents && item.parents.length > 0 && (
           <Text style={styles.parentText}>
             {item.parents.filter(p => p.phone).map(p => p.phone).join(', ')}
@@ -115,11 +117,10 @@ export default function StudentsScreen({ navigation }) {
           <Text style={styles.backBtn}>← 대시보드</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>학생 관리</Text>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => navigation.navigate('AddStudent', { student: null })}
-        >
-          <Text style={styles.addBtnText}>+ 추가</Text>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => navigation.navigate('AddStudent', { student: null })}
+          >
         </TouchableOpacity>
       </View>
 
@@ -227,6 +228,7 @@ const styles = StyleSheet.create({
   studentName: { fontSize: 20, fontWeight: 'bold', color: '#222' },
   inactiveText: { color: '#999' },
   pinText: { fontSize: 15, color: '#555', marginTop: 2 },
+  memoText: { fontSize: 14, color: '#1565C0', marginTop: 1, fontWeight: '500' },
   parentText: { fontSize: 13, color: '#888', marginTop: 2 },
   cardActions: { flexDirection: 'row', gap: 8 },
   actionBtn: {
