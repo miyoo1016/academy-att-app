@@ -18,22 +18,33 @@ class MainActivity : ReactActivity() {
     private const val TAG = "MainActivity"
   }
 
-  override fun onCreate(savedInstanceState: Bundle?) {
-    setTheme(R.style.AppTheme)
-    super.onCreate(null)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.AppTheme)
+        super.onCreate(null)
 
-    // 앱이 처음 시작될 때도 RESTART_BG_SERVICE 인텐트 처리
-    intent?.let { handleIntent(it) }
-  }
+        // 시스템에 의해 자동 실행된 경우 즉시 백그라운드로 숨김
+        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
+            Log.i(TAG, "시스템 자동 실행 감지 → 즉시 백그라운드 이동")
+            moveTaskToBack(true)
+        }
+
+        intent?.let { handleIntent(it) }
+    }
 
   /**
    * 이미 실행 중인 앱에 새 Intent가 들어올 때 (singleTask 모드)
    * SmsAlarmReceiver에서 RESTART_BG_SERVICE를 보내면 여기서 처리됨.
    */
-  override fun onNewIntent(intent: Intent) {
-    super.onNewIntent(intent)
-    handleIntent(intent)
-  }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        
+        if (intent.getBooleanExtra("is_background_launch", false) == true) {
+            Log.i(TAG, "시스템 자동 인텐트 감지 → 백그라운드 유지")
+            moveTaskToBack(true)
+        }
+        
+        handleIntent(intent)
+    }
 
   /**
    * RESTART_BG_SERVICE 액션 처리:

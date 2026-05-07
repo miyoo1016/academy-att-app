@@ -39,9 +39,9 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
-        private const val ALARM_INTERVAL_MS = 15 * 60 * 1000L  // 15분마다 감시 (빈도 감소)
-        private const val HEARTBEAT_STALE_MS = 12 * 60 * 1000L // 12분 이상 ping 없으면 좀비
-        private const val KICK_INTERVAL_MS = 24 * 60 * 60 * 1000L // 24시간마다 점검 (빈도 극소화)
+        private const val ALARM_INTERVAL_MS = 60 * 60 * 1000L  // 1시간마다 감시 (사용자 방해 최소화)
+        private const val HEARTBEAT_STALE_MS = 45 * 60 * 1000L // 45분 이상 ping 없으면 상태 이상으로 간주
+        private const val KICK_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3시간마다 정기 점검
         /**
          * AlarmManager에 반복 알람 등록
          * 앱 시작, 부팅 완료 시 호출
@@ -109,7 +109,11 @@ class SmsAlarmReceiver : BroadcastReceiver() {
 
         try {
             when (intent.action) {
-                ACTION_WATCHDOG_ALARM -> handleWatchdogAlarm(context)
+                ACTION_WATCHDOG_ALARM -> {
+                    // 시스템에 의한 자동 실행임을 표시하는 플래그 (MainActivity에서 사용)
+                    intent.putExtra("is_background_launch", true)
+                    handleWatchdogAlarm(context)
+                }
                 Intent.ACTION_BOOT_COMPLETED,
                 Intent.ACTION_MY_PACKAGE_REPLACED -> {
                     Log.i(TAG, "부팅/업데이트 → 알람 재등록 + 서비스 시작")
@@ -145,20 +149,19 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         val sinceLastKickMs = System.currentTimeMillis() - lastKick
         val isPeriodicKickTime = sinceLastKickMs > KICK_INTERVAL_MS
 
-        if (isZombie || isNeverStarted || isPeriodicKickTime) {
+        // 좀비(지연) 복구는 화면을 깨울 위험이 있으므로 정기 점검(3시간)과 미시작 시에만 복구 수행
+        if (isNeverStarted || isPeriodicKickTime) {
             if (isPeriodicKickTime) {
                 Log.i(TAG, "⏰ 정기 점검 실행 (무인)")
-            } else if (isZombie) {
-                Log.w(TAG, "⚠️ 지연 감지 (${ageMin}분) → 무인 복구")
             } else {
                 Log.w(TAG, "⚠️ 미시작 감지 → 무인 시작")
             }
-            // SharedPreferences 신호 즉시 갱신 (중복 실행 방지)
             HeartbeatModule.updateLastKick(context)
-            // 화면 절대 띄우지 않음
             triggerSilentRecovery(context)
         } else {
-            Log.d(TAG, "✅ 정상 (마지막 ping: ${ageMin}분 전)")
+            // 정상 작동 중이거나 단순히 지연된 경우(Zombie)는 무인 복구를 시도하지 않고
+            // 네이티브 서비스 생존만 확인 (화면 켜짐 방지)
+            Log.d(TAG, "✅ 정상 상태 유지 중")
             SmsWatchdogService.start(context)
         }
     }
@@ -185,9 +188,8 @@ class SmsAlarmReceiver : BroadcastReceiver() {
             context.startService(serviceIntent)
             
             Log.i(TAG, "✅ 무인 복구 신호 발송")
-            
-            // 알림 표시 (인텐트 제거하여 실수로 클릭해도 앱 안 열리게 함)
-            showRefreshNotification(context, "시스템 최적화", "백그라운드 점검 완료")
+            // 알림을 띄우는 것 자체가 화면을 깨울 수 있으므로 알림 표시 생략
+            // showRefreshNotification(context, "시스템 최적화", "백그라운드 점검 완료")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ 무인 복구 실패: ${e.message}")
