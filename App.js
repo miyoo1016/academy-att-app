@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState, NativeModules, Alert } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,6 +13,8 @@ import AddStudentScreen from './src/screens/AddStudentScreen';
 import { startSmsBackgroundService } from './src/tasks/SmsBackgroundService';
 import BackgroundService from 'react-native-background-actions';
 import { setupFcmToken, subscribeToTokenRefresh } from './src/utils/FcmSetup';
+
+const { HeartbeatModule } = NativeModules;
 
 const Stack = createStackNavigator();
 
@@ -41,6 +43,30 @@ export default function App() {
               console.log('[App] 알림 권한 허용됨');
             } else {
               console.warn('[App] 알림 권한 거부됨');
+            }
+          }
+
+          // 배터리 최적화 제외 확인 및 요청 (안드로이드 전용)
+          if (HeartbeatModule) {
+            try {
+              // 네이티브 메서드가 존재하는지 확인 (빌드 전/후 대응)
+              if (typeof HeartbeatModule.isIgnoringBatteryOptimizations === 'function') {
+                const isIgnoring = await HeartbeatModule.isIgnoringBatteryOptimizations();
+                if (!isIgnoring) {
+                  Alert.alert(
+                    '백그라운드 유지 설정',
+                    '출결 문자가 백그라운드에서도 중단 없이 발송되려면 "배터리 최적화 제외" 설정이 필요합니다.',
+                    [
+                      { text: '나중에', style: 'cancel' },
+                      { text: '설정하기', onPress: () => HeartbeatModule.requestIgnoreBatteryOptimizations() }
+                    ]
+                  );
+                }
+              } else {
+                console.log('[App] HeartbeatModule은 있으나 배터리 관련 메서드가 없습니다. (재빌드 필요)');
+              }
+            } catch (e) {
+              console.warn('[App] 배터리 설정 확인 중 오류:', e);
             }
           }
 

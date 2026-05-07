@@ -21,6 +21,7 @@ exports.sendAttendanceFcm = onDocumentCreated("attendance/{docId}", async (event
         }
 
         const fcmToken = tokenDoc.data().token;
+        console.log(`Sending FCM to token: ${fcmToken ? fcmToken.substring(0, 10) + '...' : 'NULL'}`);
         const message = {
             data: {
                 type: "ATTENDANCE_SMS",

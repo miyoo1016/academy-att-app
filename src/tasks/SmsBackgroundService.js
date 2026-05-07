@@ -29,9 +29,9 @@ let lastHeartbeatTime    = 0;
 let lastResetTime        = Date.now();
 let lastBirthdayCheckDate = '';
 
-// ── 핵심 타이머 설정 (FCM 도입으로 대폭 완화) ──────────────────────
-const HEARTBEAT_INTERVAL  = 15 * 60 * 1000;   // 15분마다 Firebase 생존 신호
-const POLLING_INTERVAL    = 2 * 60 * 1000;    // 2분마다 폴링 폴백 (클로드 조언에 따라 복구)
+// ── 핵심 타이머 설정 (FCM 도입으로 대폭 완화했으나, 안정성을 위해 단축) ──────────────────────
+const HEARTBEAT_INTERVAL  = 10 * 60 * 1000;   // 10분마다 Firebase 생존 신호
+const POLLING_INTERVAL    = 30 * 1000;        // 30초마다 폴링 (FCM 실패 시 빠른 대응)
 const RESET_INTERVAL      = 60 * 60 * 1000;   // 1시간마다 리스너/상태 리셋
 
 // ─────────────────────────────────────────────────────────────────
@@ -40,11 +40,16 @@ const RESET_INTERVAL      = 60 * 60 * 1000;   // 1시간마다 리스너/상태 
 const sendHeartbeat = async () => {
   try {
     const statusRef = doc(db, 'service_status', 'main_terminal');
+    const tokenDoc = await getDoc(doc(db, 'device_tokens', 'main_phone'));
+    const tokenData = tokenDoc.exists() ? tokenDoc.data() : {};
+
     await withTimeout(setDoc(statusRef, {
       lastActive: serverTimestamp(),
       platform: Platform.OS,
       updatedAt: new Date().toISOString(),
       status: 'running_fcm_hybrid',
+      fcmTokenSnippet: tokenData.token ? tokenData.token.substring(0, 10) + '...' : 'MISSING',
+      tokenUpdatedAt: tokenData.updatedAt || null
     }, { merge: true }));
     lastHeartbeatTime = Date.now();
   } catch (e) {

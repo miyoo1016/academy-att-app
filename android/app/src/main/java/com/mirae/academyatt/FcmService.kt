@@ -105,7 +105,8 @@ class FcmService : FirebaseMessagingService() {
     private fun markAsProcessed(docId: String) {
         Thread {
             try {
-                val urlString = "https://firestore.googleapis.com/v1/projects/attmirae/databases/(default)/documents/attendance/$docId?updateMask.fieldPaths=processed&key=AIzaSyCUkD62CH5Z_DNXhWGxP2QAssSML5_QgWk"
+                // Correct API Key from google-services.json
+                val urlString = "https://firestore.googleapis.com/v1/projects/attmirae/databases/(default)/documents/attendance/$docId?updateMask.fieldPaths=processed&key=AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
                 val url = java.net.URL(urlString)
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "PATCH"

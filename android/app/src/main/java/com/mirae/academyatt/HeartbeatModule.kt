@@ -1,9 +1,12 @@
 package com.mirae.academyatt
 
-import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.Promise
 
 /**
  * HeartbeatModule
@@ -28,6 +31,28 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
         val prefs = reactApplicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putLong(KEY_PING, System.currentTimeMillis()).apply()
+    }
+
+    /** 배터리 최적화 제외 여부 확인 */
+    @ReactMethod
+    fun isIgnoringBatteryOptimizations(promise: Promise) {
+        val pm = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val packageName = reactApplicationContext.packageName
+        promise.resolve(pm.isIgnoringBatteryOptimizations(packageName))
+    }
+
+    /** 배터리 최적화 제외 요청 창 띄우기 */
+    @ReactMethod
+    fun requestIgnoreBatteryOptimizations() {
+        val pm = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val packageName = reactApplicationContext.packageName
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactApplicationContext.startActivity(intent)
+        }
     }
 
     companion object {
