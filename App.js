@@ -223,7 +223,6 @@ const styles = StyleSheet.create({
 AppRegistry.registerHeadlessTask('SilentRecoveryTask', () => async () => {
   console.log('[Headless] 🔄 백그라운드 무인 복구 시작');
   try {
-    // startSmsBackgroundService는 이미 내부적으로 isRunning() 체크를 함
     const { startSmsBackgroundService } = require('./src/tasks/SmsBackgroundService');
     await startSmsBackgroundService();
     console.log('[Headless] ✅ 백그라운드 복구 완료');

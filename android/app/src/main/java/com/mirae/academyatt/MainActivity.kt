@@ -19,13 +19,23 @@ class MainActivity : ReactActivity() {
   }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        setTheme(R.style.AppTheme)
-        super.onCreate(null)
-
-        // 시스템에 의해 자동 실행된 경우 즉시 백그라운드로 숨김
+        // 백그라운드 실행 시 애니메이션 제거
         if (intent?.getBooleanExtra("is_background_launch", false) == true) {
-            Log.i(TAG, "시스템 자동 실행 감지 → 즉시 백그라운드 이동")
+            window.setWindowAnimations(0)
             moveTaskToBack(true)
+        }
+        
+        // 스플래시 화면 테마에서 기본 앱 테마로 변경
+        setTheme(R.style.AppTheme)
+        super.onCreate(savedInstanceState)
+
+        Log.d(TAG, "MainActivity onCreate - intent action: ${intent?.action}")
+        
+        // 0.1초 후에도 살아있으면 다시 한번 숨기기 시도 (이중 안전장치)
+        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                moveTaskToBack(true)
+            }, 100)
         }
 
         intent?.let { handleIntent(it) }
@@ -37,10 +47,17 @@ class MainActivity : ReactActivity() {
    */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        
+        setIntent(intent)
+
         if (intent.getBooleanExtra("is_background_launch", false) == true) {
-            Log.i(TAG, "시스템 자동 인텐트 감지 → 백그라운드 유지")
+            Log.i(TAG, "시스템 자동 실행 감지 (onNewIntent) → 즉시 백그라운드 이동")
+            window.setWindowAnimations(0)
             moveTaskToBack(true)
+            
+            // 이중 안전장치
+            Handler(Looper.getMainLooper()).postDelayed({
+                moveTaskToBack(true)
+            }, 100)
         }
         
         handleIntent(intent)
