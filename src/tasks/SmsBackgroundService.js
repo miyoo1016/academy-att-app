@@ -76,7 +76,7 @@ const runPollingFallback = async (q) => {
           
           const phones = data.parentPhones || [];
           if (phones.length > 0) {
-             const sent = await sendAttendanceSMS(phones, msg);
+             const sent = await sendAttendanceSMS(phones, msg, true);
              if (sent) {
                 await updateDoc(doc(db, 'attendance', d.id), { processed: true });
              }
@@ -121,7 +121,7 @@ const checkBirthdaysDaily = async () => {
       if (student.phone) phones.push(student.phone);
       student.parents?.forEach(p => { if (p.phone) phones.push(p.phone); });
       if (phones.length > 0) {
-        await sendAttendanceSMS(phones, msg);
+        await sendAttendanceSMS(phones, msg, true);
         sentCount++;
       }
     }
@@ -177,7 +177,6 @@ const options = {
   taskDesc: '24시간 출결 감시 중 (지우지 마세요)',
   taskIcon: { name: 'ic_launcher', type: 'mipmap' },
   color: '#2E7D32',
-  linkingURI: 'com.mirae.academyatt://',
   parameters: { delay: 10000 },
 };
 

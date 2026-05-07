@@ -43,12 +43,14 @@ class MainActivity : ReactActivity() {
    */
   private fun handleIntent(intent: Intent) {
     if (intent.action == "com.mirae.academyatt.RESTART_BG_SERVICE") {
-      Log.i(TAG, "🔄 RESTART_BG_SERVICE 인텐트 수신 → JS 이벤트 발송")
-      // React Native EventEmitter로 JS에 신호를 보낼 수도 있지만,
-      // 가장 확실한 방법은 JS가 자체적으로 pingHeartbeat 리셋 후
-      // 서비스를 재시작하는 것.
-      // HeartbeatModule ping 초기화 (강제 재시작 트리거)
+      Log.i(TAG, "🔄 RESTART_BG_SERVICE 인텐트 수신 → JS 초기화 후 백그라운드로 이동")
+      
+      // HeartbeatModule ping 초기화 (JS가 다시 ping하도록 유도)
       HeartbeatModule.resetPing(applicationContext)
+
+      // [핵심] 사용자가 직접 연 것이 아니라 시스템이 복구용으로 연 것이므로 
+      // JS 엔진만 깨우고 화면은 즉시 백그라운드로 숨김
+      moveTaskToBack(true)
     }
   }
 

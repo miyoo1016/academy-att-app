@@ -39,9 +39,9 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
-        private const val ALARM_INTERVAL_MS = 5 * 60 * 1000L   // 5분마다
-        private const val HEARTBEAT_STALE_MS = 4 * 60 * 1000L  // 4분 이상 ping 없으면 좀비
-
+        private const val ALARM_INTERVAL_MS = 15 * 60 * 1000L  // 15분마다 감시 (빈도 감소)
+        private const val HEARTBEAT_STALE_MS = 12 * 60 * 1000L // 12분 이상 ping 없으면 좀비
+        private const val KICK_INTERVAL_MS = 24 * 60 * 60 * 1000L // 24시간마다 점검 (빈도 극소화)
         /**
          * AlarmManager에 반복 알람 등록
          * 앱 시작, 부팅 완료 시 호출
@@ -140,20 +140,25 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         val isZombie = lastPing > 0L && ageMs > HEARTBEAT_STALE_MS
         val isNeverStarted = lastPing == 0L
 
-        if (isZombie || isNeverStarted) {
-            if (isZombie) {
-                Log.w(TAG, "⚠️ 좀비 상태 감지! JS 서비스 ${ageMin}분째 무응답 → 강제 재시작")
+        // ── 사용자 요청: 2~3시간마다 강제 깨우기 로직 추가 ──
+        val lastKick = HeartbeatModule.getLastKick(context)
+        val sinceLastKickMs = System.currentTimeMillis() - lastKick
+        val isPeriodicKickTime = sinceLastKickMs > KICK_INTERVAL_MS
+
+        if (isZombie || isNeverStarted || isPeriodicKickTime) {
+            if (isPeriodicKickTime) {
+                Log.i(TAG, "⏰ 정기 점검 실행 (무인)")
+            } else if (isZombie) {
+                Log.w(TAG, "⚠️ 지연 감지 (${ageMin}분) → 무인 복구")
             } else {
-                Log.w(TAG, "⚠️ JS 서비스 미시작 감지 → 강제 시작")
+                Log.w(TAG, "⚠️ 미시작 감지 → 무인 시작")
             }
-
-            // === 핵심: JS 서비스(RNBackgroundActionsTask)를 직접 재시작 ===
-            restartJsBackgroundService(context)
-
+            // SharedPreferences 신호 즉시 갱신 (중복 실행 방지)
+            HeartbeatModule.updateLastKick(context)
+            // 화면 절대 띄우지 않음
+            triggerSilentRecovery(context)
         } else {
-            Log.d(TAG, "✅ JS 서비스 정상 (마지막 ping: ${ageMin}분 전)")
-
-            // 정상 동작 중이더라도 Watchdog 서비스 생존 확인
+            Log.d(TAG, "✅ 정상 (마지막 ping: ${ageMin}분 전)")
             SmsWatchdogService.start(context)
         }
     }
@@ -167,31 +172,57 @@ class SmsAlarmReceiver : BroadcastReceiver() {
      * Android 10+에서도 BroadcastReceiver → startForegroundService는 허용됨.
      * (startActivity와 달리 서비스 시작은 백그라운드에서도 가능)
      */
-    private fun restartJsBackgroundService(context: Context) {
+    /**
+     * Headless JS를 통해 화면을 띄우지 않고 백그라운드 서비스를 복구/시작함
+     */
+    private fun triggerSilentRecovery(context: Context) {
         try {
-            // 1. Watchdog 서비스 재시작 (확인)
+            // 1. 네이티브 Watchdog 서비스 재시작
             SmsWatchdogService.start(context)
 
-            // 2. MainActivity에 RESTART_BG_SERVICE 액션 Intent 전송
-            //    MainActivity가 이미 실행 중이면 onNewIntent로 수신
-            //    처음 실행이면 onCreate에서 처리
-            val restartIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            if (restartIntent != null) {
-                restartIntent.apply {
-                    action = "com.mirae.academyatt.RESTART_BG_SERVICE"
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    // 화면을 켜지 않고 백그라운드에서만 처리하도록 플래그 설정
-                    addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-                }
-                context.startActivity(restartIntent)
-                Log.i(TAG, "✅ JS 서비스 재시작 요청 완료")
-            } else {
-                Log.e(TAG, "launchIntent null")
-            }
-
+            // 2. Headless JS 태스크 실행 (화면 없이 엔진만 기동)
+            val serviceIntent = Intent(context, SilentRecoveryService::class.java)
+            context.startService(serviceIntent)
+            
+            Log.i(TAG, "✅ 무인 복구 신호 발송")
+            
+            // 알림 표시 (인텐트 제거하여 실수로 클릭해도 앱 안 열리게 함)
+            showRefreshNotification(context, "시스템 최적화", "백그라운드 점검 완료")
+            
         } catch (e: Exception) {
-            Log.e(TAG, "JS 서비스 재시작 실패: ${e.message}")
+            Log.e(TAG, "❌ 무인 복구 실패: ${e.message}")
         }
+    }
+    }
+
+
+    /**
+     * 시스템 리프레시 알림 표시 (시스템이 앱을 살아있는 것으로 간주하도록 유도)
+     */
+    private fun showRefreshNotification(context: Context, title: String, message: String) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                "system_refresh", "시스템 상태 유지",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            nm.createNotificationChannel(channel)
+        }
+
+        // 클릭해도 아무 일도 일어나지 않도록 빈 인텐트 설정
+        val pi = PendingIntent.getBroadcast(
+            context, 1, Intent(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        )
+
+        val notification = androidx.core.app.NotificationCompat.Builder(context, "system_refresh")
+            .setContentTitle(title)
+            .setContentText(message)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+
+        nm.notify(1001, notification)
     }
 }

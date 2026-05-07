@@ -20,7 +20,7 @@ export const buildBirthdayMessage = (name) => {
  * 터치 개입 없는 완전 자동 배경 문자 발송 (안드로이드)
  * iOS이거나 안드로이드 네이티브 모듈 로드 실패 시 기존 UI 방식(expo-sms)으로 폴백
  */
-export const sendAttendanceSMS = async (phones, message) => {
+export const sendAttendanceSMS = async (phones, message, isBackground = false) => {
   if (!phones || phones.length === 0) return false;
 
   if (Platform.OS === 'android') {
@@ -32,26 +32,21 @@ export const sendAttendanceSMS = async (phones, message) => {
       return results.every(res => res === true);
     } catch (error) {
       console.error('Android 네이티브 SMS 발송 실패:', error);
-      if (error === 'NATIVE_MODULE_MISSING') {
-        // 이 메시지가 뜨면 네이티브 모듈 합치기(Build)가 잘못된 것임
-        Alert.alert('시스템 오류', '자동 문자 발송 모듈이 앱에 포함되지 않았습니다.');
-      } else {
-        Alert.alert('발송 실패', `원인: ${error.message || error}`);
-      }
+      // 백그라운드 발송 시 화면을 깨울 수 있으므로 Alert.alert 호출을 모두 제거합니다.
+      // 실패 시 다음 로직(expo-sms 폴백 등)으로 자연스럽게 넘어갑니다.
     }
   }
 
-  // 시뮬레이션 모드 (개발 중 웹 브라우저나 기기에서 실제 발송 대신 알림 띄우기)
-  if (__DEV__) {
-    console.log('--- [SMS 시뮬레이션] ---');
-    console.log('수신:', phones.join(', '));
-    console.log('내용:', message);
-    console.log('----------------------');
-    Alert.alert('SMS 발송 시뮬레이션', `[전송 대상: ${phones.length}명]\n\n${message}`);
-    return true; // 테스트를 위해 성공으로 반환
+  // 시뮬레이션 모드 제거: 개발 모드(__DEV__)에서도 실제 발송을 테스트할 수 있도록 Alert.alert를 완전히 제거했습니다.
+  // 이 부분이 백그라운드에서 실행될 때 앱 화면을 강제로 깨우는 원인이었습니다.
+
+  // [중요] 백그라운드 태스크에서 실행 중일 때는 화면 전환(expo-sms)을 막기 위해 여기서 중단합니다.
+  if (isBackground) {
+    console.log('[SMS] 백그라운드에서는 expo-sms 팝업 띄우기를 방지합니다.');
+    return false;
   }
 
-  // iOS 또는 안드로이드 네이티브 실패 시 기존 방식(반자동) 수행
+  // iOS 또는 안드로이드 네이티브 실패 시 기존 방식(반자동) 수행 (수동 발송 시에만 실행됨)
   try {
     // 웹 브라우저의 경우 isAvailableAsync가 false를 반환하므로 체크를 우회합니다.
     if (Platform.OS === 'web') {

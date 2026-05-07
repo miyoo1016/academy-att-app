@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState, NativeModules, Alert } from 'react-native';
+import messaging from '@react-native-firebase/messaging';
+import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState, NativeModules, Alert, AppRegistry } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -70,6 +71,25 @@ export default function App() {
             }
           }
 
+          // [핵심] 다른 앱 위에 그리기 권한 확인 및 요청 (Android 10+ 백그라운드 실행용)
+          if (HeartbeatModule && typeof HeartbeatModule.canDrawOverlays === 'function') {
+            try {
+              const canOverlay = await HeartbeatModule.canDrawOverlays();
+              if (!canOverlay) {
+                Alert.alert(
+                  '시스템 자동 깨우기 권한',
+                  '장시간 화면이 꺼져 있을 때도 시스템이 자동으로 깨어나 문자를 보내려면 "다른 앱 위에 표시" 권한이 필요합니다.',
+                  [
+                    { text: '나중에', style: 'cancel' },
+                    { text: '설정하기', onPress: () => HeartbeatModule.requestOverlayPermission() }
+                  ]
+                );
+              }
+            } catch (e) {
+              console.warn('[App] 오버레이 권한 확인 중 오류:', e);
+            }
+          }
+
           // JS 백그라운드 서비스 즉시 시작
           startSmsBackgroundService();
 
@@ -112,9 +132,21 @@ export default function App() {
 
         if (Platform.OS === 'android') {
           try {
-            // 서비스가 멈춰있으면 재시작
-            if (!BackgroundService.isRunning()) {
-              console.log('[App] ⚠️ JS 서비스 중단 감지 → 즉시 재시작');
+            // 1. 라이브러리 레벨의 서비스 실행 여부 확인
+            const isRunning = BackgroundService.isRunning();
+            
+            // 2. 실제 하트비트(JS Loop) 생존 여부 확인 (3초마다 ping 해야 함)
+            let isStale = false;
+            if (HeartbeatModule && typeof HeartbeatModule.getLastPing === 'function') {
+              const lastPing = await HeartbeatModule.getLastPing();
+              const diff = Date.now() - lastPing;
+              if (lastPing > 0 && diff > 5 * 60 * 1000) { // 5분 이상 멈춰있었으면 좀비
+                isStale = true;
+              }
+            }
+
+            if (!isRunning || isStale) {
+              console.log(`[App] ⚠️ JS 서비스 상태 이상 (isRunning: ${isRunning}, isStale: ${isStale}) → 강제 재시작`);
               await startSmsBackgroundService();
             } else {
               console.log('[App] ✅ JS 서비스 정상 실행 중');
@@ -182,4 +214,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#1565C0',
   },
+});
+
+// ─────────────────────────────────────────────────────────────────
+// [핵심] Headless JS 태스크 등록 (UI 없이 백그라운드에서 실행)
+// SmsAlarmReceiver(Kotlin)에서 장애 감지 시 이 태스크를 직접 호출함.
+// ─────────────────────────────────────────────────────────────────
+AppRegistry.registerHeadlessTask('SilentRecoveryTask', () => async () => {
+  console.log('[Headless] 🔄 백그라운드 무인 복구 시작');
+  try {
+    // startSmsBackgroundService는 이미 내부적으로 isRunning() 체크를 함
+    const { startSmsBackgroundService } = require('./src/tasks/SmsBackgroundService');
+    await startSmsBackgroundService();
+    console.log('[Headless] ✅ 백그라운드 복구 완료');
+  } catch (e) {
+    console.error('[Headless] ❌ 복구 실패:', e);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// [핵심] FCM 백그라운드 메시지 핸들러 등록 (무음 처리)
+// 원생이 번호를 입력할 때 발송되는 FCM 메시지를 JS가 받게 되면
+// 기본적으로 UI를 띄우려는 오작동(특히 Expo 환경)이 발생할 수 있습니다.
+// 이 메시지는 이미 네이티브(FcmService.kt)에서 문자로 발송 처리하므로
+// JS에서는 아무것도 하지 않고 조용히 넘기도록 설정합니다.
+// ─────────────────────────────────────────────────────────────────
+messaging().setBackgroundMessageHandler(async remoteMessage => {
+  console.log('[Headless] 🤫 FCM 백그라운드 메시지 수신 (무시함)');
+  // 네이티브 핸들러가 이미 문자를 보냈으므로 JS는 아무 작업도 하지 않음
 });

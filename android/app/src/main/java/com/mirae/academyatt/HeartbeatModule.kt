@@ -1,7 +1,9 @@
 package com.mirae.academyatt
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -33,6 +35,13 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
         prefs.edit().putLong(KEY_PING, System.currentTimeMillis()).apply()
     }
 
+    /** 마지막 하트비트 시각 조회 (JS에서 상태 체크용) */
+    @ReactMethod
+    fun getLastPing(promise: Promise) {
+        val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        promise.resolve(prefs.getLong(KEY_PING, 0L).toDouble())
+    }
+
     /** 배터리 최적화 제외 여부 확인 */
     @ReactMethod
     fun isIgnoringBatteryOptimizations(promise: Promise) {
@@ -54,10 +63,47 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
             reactApplicationContext.startActivity(intent)
         }
     }
+    /** 다른 앱 위에 그리기(오버레이) 권한 여부 확인 */
+    @ReactMethod
+    fun canDrawOverlays(promise: Promise) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            promise.resolve(android.provider.Settings.canDrawOverlays(reactApplicationContext))
+        } else {
+            promise.resolve(true)
+        }
+    }
+
+    /** 다른 앱 위에 그리기 권한 설정 창 띄우기 */
+    @ReactMethod
+    fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val packageName = reactApplicationContext.packageName
+            val intent = Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactApplicationContext.startActivity(intent)
+        }
+    }
 
     companion object {
         const val PREFS_NAME = "academyatt_heartbeat"
         const val KEY_PING   = "last_ping"
+        const val KEY_LAST_KICK = "last_kick_time"
+
+        /** JS 서비스 생존 확인 시각 갱신 (SmsAlarmReceiver에서 호출 가능하도록) */
+        fun updateLastKick(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putLong(KEY_LAST_KICK, System.currentTimeMillis()).apply()
+        }
+
+        /** 마지막 강제 깨우기 시각 조회 */
+        fun getLastKick(context: Context): Long {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getLong(KEY_LAST_KICK, 0L)
+        }
 
         /** SmsWatchdogService / SmsAlarmReceiver에서 호출 */
         fun getLastPing(context: Context): Long {
