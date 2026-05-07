@@ -30,9 +30,9 @@ let lastResetTime        = Date.now();
 let lastBirthdayCheckDate = '';
 
 // ── 핵심 타이머 설정 (FCM 도입으로 대폭 완화했으나, 안정성을 위해 단축) ──────────────────────
-const HEARTBEAT_INTERVAL  = 10 * 60 * 1000;   // 10분마다 Firebase 생존 신호
-const POLLING_INTERVAL    = 30 * 1000;        // 30초마다 폴링 (FCM 실패 시 빠른 대응)
-const RESET_INTERVAL      = 60 * 60 * 1000;   // 1시간마다 리스너/상태 리셋
+const HEARTBEAT_INTERVAL  = 30 * 60 * 1000;   // 30분마다 Firebase 생존 신호 (빈도 대폭 감소)
+const POLLING_INTERVAL    = 15 * 60 * 1000;   // 15분마다 폴링 (백업용)
+const RESET_INTERVAL      = 2 * 60 * 60 * 1000; // 2시간마다 상태 리셋
 
 // ─────────────────────────────────────────────────────────────────
 // 하트비트 (Firebase에 생존 신호 + 네이티브 SharedPreferences ping)

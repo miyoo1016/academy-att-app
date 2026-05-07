@@ -40,7 +40,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
         private const val ALARM_INTERVAL_MS = 60 * 60 * 1000L  // 1시간마다 감시 (사용자 방해 최소화)
-        private const val HEARTBEAT_STALE_MS = 45 * 60 * 1000L // 45분 이상 ping 없으면 상태 이상으로 간주
+        private const val HEARTBEAT_STALE_MS = 2 * 60 * 60 * 1000L // 2시간 이상 ping 없으면 상태 이상으로 간주
         private const val KICK_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3시간마다 정기 점검
         /**
          * AlarmManager에 반복 알람 등록
@@ -87,6 +87,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         private fun buildPendingIntent(context: Context): PendingIntent {
             val intent = Intent(context, SmsAlarmReceiver::class.java).apply {
                 action = ACTION_WATCHDOG_ALARM
+                putExtra("is_background_launch", true)
             }
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

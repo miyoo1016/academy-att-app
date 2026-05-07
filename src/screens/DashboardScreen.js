@@ -67,10 +67,25 @@ export default function DashboardScreen({ navigation }) {
       }
     });
 
-    const serviceCheckInterval = setInterval(() => {
-      setIsServiceRunning(BackgroundService.isRunning());
-      setRefreshTrigger(prev => prev + 1); // 1초마다 화면 숫자 갱신 강제 발생
-    }, 1000);
+    let serviceCheckInterval = null;
+    const updateInterval = () => {
+      if (AppState.currentState === 'active') {
+        if (!serviceCheckInterval) {
+          serviceCheckInterval = setInterval(() => {
+            setIsServiceRunning(BackgroundService.isRunning());
+            setRefreshTrigger(prev => prev + 1);
+          }, 1000);
+        }
+      } else {
+        if (serviceCheckInterval) {
+          clearInterval(serviceCheckInterval);
+          serviceCheckInterval = null;
+        }
+      }
+    };
+
+    const appStateSub = AppState.addEventListener('change', updateInterval);
+    updateInterval(); // 초기 실행
 
     const checkAndAutoImportStudents = async () => {
       try {
@@ -109,7 +124,8 @@ export default function DashboardScreen({ navigation }) {
     return () => {
       unsubscribeAtt();
       unsubscribeStatus();
-      clearInterval(serviceCheckInterval);
+      if (serviceCheckInterval) clearInterval(serviceCheckInterval);
+      appStateSub.remove();
     };
   }, []);
 
