@@ -39,9 +39,9 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
-        private const val ALARM_INTERVAL_MS = 10 * 60 * 1000L  // 10분마다 감시 (과거 성공했던 주기)
-        private const val HEARTBEAT_STALE_MS = 20 * 60 * 1000L // 20분 이상 ping 없으면 상태 이상으로 간주
-        private const val KICK_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3시간마다 정기 점검
+        private const val ALARM_INTERVAL_MS = 5 * 60 * 1000L  // 5분마다 감시 (과거 성공했던 주기)
+        private const val HEARTBEAT_STALE_MS = 5 * 60 * 1000L // 5분 이상 ping 없으면 상태 이상으로 간주
+        private const val KICK_INTERVAL_MS = 2 * 60 * 60 * 1000L // 2시간마다 정기 점검
         /**
          * AlarmManager에 반복 알람 등록
          * 앱 시작, 부팅 완료 시 호출
@@ -184,18 +184,29 @@ class SmsAlarmReceiver : BroadcastReceiver() {
      */
     private fun triggerSilentRecovery(context: Context) {
         try {
-            // 1. 네이티브 Watchdog 서비스 재시작 (상단바 서비스 갱신)
+            // 1. 네이티브 Watchdog 서비스 재시작
             SmsWatchdogService.start(context)
 
-            // 2. Headless JS 태스크 실행 (화면 없이 엔진만 기동)
+            // 2. [핵심] MainActivity를 백그라운드 모드로 호출
+            // 서비스만으로는 JS 엔진이 안 깨어나는 경우가 많아, 액티비티를 깨우되 즉시 숨기는 방식을 사용
+            val activityIntent = Intent(context, MainActivity::class.java).apply {
+                action = "com.mirae.academyatt.RESTART_BG_SERVICE"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                putExtra("is_background_launch", true)
+            }
+            context.startActivity(activityIntent)
+            
+            // 3. 서비스도 보조적으로 실행
             val serviceIntent = Intent(context, SilentRecoveryService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {
                 context.startService(serviceIntent)
             }
-            
-            Log.i(TAG, "✅ 백그라운드 서비스 무음 복구 신호 발송")
+
+            Log.i(TAG, "✅ 백그라운드 엔진 복구 신호 발송 (Activity + Service)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ 복구 실패: ${e.message}")
         }
