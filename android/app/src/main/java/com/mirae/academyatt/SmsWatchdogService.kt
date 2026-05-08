@@ -7,7 +7,14 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import android.telephony.SmsManager
 import androidx.core.app.NotificationCompat
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
+import org.json.JSONArray
+import android.os.Handler
+import android.os.Looper
 
 /**
  * SmsWatchdogService - 경량화된 포그라운드 서비스
@@ -22,6 +29,8 @@ class SmsWatchdogService : Service() {
         private const val TAG = "SmsWatchdog"
         private const val CHANNEL_ID = "academy_watchdog_channel"
         private const val NOTIFICATION_ID = 9999
+        private const val FIREBASE_PROJECT_ID = "attmirae"
+        private const val API_KEY = "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
 
         fun start(context: Context) {
             val intent = Intent(context, SmsWatchdogService::class.java)
@@ -54,7 +63,98 @@ class SmsWatchdogService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        checkPendingMessagesNative()
         return START_STICKY
+    }
+
+    private fun checkPendingMessagesNative() {
+        Thread {
+            try {
+                Log.d(TAG, "🔍 [네이티브] 폴링 시작...")
+                val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents:runQuery?key=$API_KEY"
+                val queryJson = """
+                    {
+                        "structuredQuery": {
+                            "from": [{"collectionId": "attendance"}],
+                            "where": {
+                                "fieldFilter": {
+                                    "field": {"fieldPath": "processed"},
+                                    "op": "EQUAL",
+                                    "value": {"booleanValue": false}
+                                }
+                            }
+                        }
+                    }
+                """.trimIndent()
+
+                val url = URL(urlString)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(queryJson.toByteArray()) }
+
+                val response = if (conn.responseCode == 200) {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    return@Thread
+                }
+                conn.disconnect()
+
+                val results = JSONArray(response)
+                for (i in 0 until results.length()) {
+                    val obj = results.optJSONObject(i) ?: continue
+                    val doc = obj.optJSONObject("document") ?: continue
+                    val docId = doc.getString("name").split("/").last()
+                    val fields = doc.getJSONObject("fields")
+                    
+                    val studentName = fields.optJSONObject("studentName")?.optString("stringValue") ?: "학생"
+                    val type = fields.optJSONObject("type")?.optString("stringValue") ?: "checkin"
+                    val time = fields.optJSONObject("time")?.optString("stringValue") ?: ""
+                    val parentPhones = fields.optJSONObject("parentPhones")?.optJSONObject("arrayValue")?.optJSONArray("values")
+                    
+                    val message = if (type == "checkin") {
+                        "[미래학원] $time $studentName 원생이 등원하였습니다."
+                    } else {
+                        "[미래학원] $time $studentName 원생이 하원하였습니다."
+                    }
+
+                    if (parentPhones != null) {
+                        val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            getSystemService(SmsManager::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            SmsManager.getDefault()
+                        }
+                        
+                        for (j in 0 until parentPhones.length()) {
+                            val phone = parentPhones.getJSONObject(j).optString("stringValue")
+                            if (!phone.isNullOrBlank()) {
+                                smsManager.sendTextMessage(phone, null, message, null, null)
+                                Log.i(TAG, "✅ [네이티브] SMS 발송 성공: $phone")
+                            }
+                        }
+                        markAsProcessedNative(docId)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ [네이티브] 폴링 오류: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun markAsProcessedNative(docId: String) {
+        try {
+            val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId?updateMask.fieldPaths=processed&key=$API_KEY"
+            val url = URL(urlString)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "PATCH"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            val body = "{\"fields\":{\"processed\":{\"booleanValue\":true}}}"
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            conn.disconnect()
+        } catch (e: Exception) {}
     }
 
     private fun createNotificationChannel() {
