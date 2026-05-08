@@ -63,8 +63,44 @@ class SmsWatchdogService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // [네이티브 통합] 하트비트와 폴링 실행
+        sendHeartbeatNative()
         checkPendingMessagesNative()
         return START_STICKY
+    }
+
+    private fun sendHeartbeatNative() {
+        Thread {
+            try {
+                Log.d(TAG, "📡 [네이티브] 하트비트 전송...")
+                val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/service_status/main_terminal?updateMask.fieldPaths=lastActive&updateMask.fieldPaths=status&updateMask.fieldPaths=platform&key=$API_KEY"
+                val url = URL(urlString)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "PATCH"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                
+                // Firestore REST API 특성상 정확한 구조가 필요함
+                val body = """
+                    {
+                        "fields": {
+                            "lastActive": {"stringValue": "${java.time.Instant.now()}"},
+                            "status": {"stringValue": "running_native_only"},
+                            "platform": {"stringValue": "android"}
+                        }
+                    }
+                """.trimIndent()
+                
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.d(TAG, "📡 하트비트 완료 (Status: ${conn.responseCode})")
+                conn.disconnect()
+                
+                // 네이티브 하트비트 저장 (SmsAlarmReceiver 확인용)
+                HeartbeatModule.pingHeartbeat(applicationContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 하트비트 오류: ${e.message}")
+            }
+        }.start()
     }
 
     private fun checkPendingMessagesNative() {
@@ -175,10 +211,10 @@ class SmsWatchdogService : Service() {
 
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("미래학원 출결 신호 대기 중")
-            .setContentText("메시지 자동 발송 시스템 가동 중")
+            .setContentTitle("실시간 출결 감시 서비스 가동 중")
+            .setContentText("안정적인 메시지 전송 상태를 유지하고 있습니다")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW) // MIN 대신 LOW로 해서 상단바에 확실히 유지
             .setSilent(true)
             .setOngoing(true)
             .build()

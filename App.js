@@ -54,8 +54,10 @@ export default function App() {
               }
             }
 
-            // JS 백그라운드 서비스 시작 (백그라운드에서도 실행 필요)
-            startSmsBackgroundService();
+            // [근본적 해결] 자바스크립트 백그라운드 엔진 중단
+            // 화면 팝업의 주범인 JS 백그라운드 서비스를 더 이상 사용하지 않습니다.
+            // 모든 기능은 SmsWatchdogService(Native)에서 수행합니다.
+            // startSmsBackgroundService();
 
           // FCM 설정 (주 단말기 토큰 등록)
           await setupFcmToken();
