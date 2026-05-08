@@ -19,26 +19,42 @@ class MainActivity : ReactActivity() {
   }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 백그라운드 실행 시 애니메이션 제거
-        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
+        val isBackground = intent?.getBooleanExtra("is_background_launch", false) == true
+        Log.d(TAG, "MainActivity onCreate - isBackground: $isBackground, action: ${intent?.action}")
+        
+        if (isBackground) {
+            // UI 그리기 전에 즉시 숨김
             window.setWindowAnimations(0)
             moveTaskToBack(true)
         }
         
-        // 스플래시 화면 테마에서 기본 앱 테마로 변경
         setTheme(R.style.AppTheme)
         super.onCreate(savedInstanceState)
 
-        Log.d(TAG, "MainActivity onCreate - intent action: ${intent?.action}")
-        
-        // 0.1초 후에도 살아있으면 다시 한번 숨기기 시도 (이중 안전장치)
-        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                moveTaskToBack(true)
-            }, 100)
+        if (isBackground) {
+            moveTaskToBack(true)
+            // 0.5초 동안 끈질기게 숨기기 시도 (일부 기기 지연 대응)
+            val handler = Handler(Looper.getMainLooper())
+            handler.postDelayed({ moveTaskToBack(true) }, 100)
+            handler.postDelayed({ moveTaskToBack(true) }, 500)
         }
 
         intent?.let { handleIntent(it) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
+            moveTaskToBack(true)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "MainActivity onResume - isBackground: ${intent?.getBooleanExtra("is_background_launch", false)}")
+        if (intent?.getBooleanExtra("is_background_launch", false) == true) {
+            moveTaskToBack(true)
+        }
     }
 
   /**

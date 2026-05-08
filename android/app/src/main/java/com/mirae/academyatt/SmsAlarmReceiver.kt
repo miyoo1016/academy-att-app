@@ -150,19 +150,19 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         val sinceLastKickMs = System.currentTimeMillis() - lastKick
         val isPeriodicKickTime = sinceLastKickMs > KICK_INTERVAL_MS
 
-        // 좀비(지연) 복구는 화면을 깨울 위험이 있으므로 정기 점검(3시간)과 미시작 시에만 복구 수행
-        if (isNeverStarted || isPeriodicKickTime) {
+        if (isNeverStarted || isZombie || isPeriodicKickTime) {
             if (isPeriodicKickTime) {
                 Log.i(TAG, "⏰ 정기 점검 실행 (무인)")
+            } else if (isZombie) {
+                Log.w(TAG, "⚠️ 좀비 상태 감지 (${ageMin}분 전) → 무인 복구 시도")
             } else {
                 Log.w(TAG, "⚠️ 미시작 감지 → 무인 시작")
             }
             HeartbeatModule.updateLastKick(context)
             triggerSilentRecovery(context)
         } else {
-            // 정상 작동 중이거나 단순히 지연된 경우(Zombie)는 무인 복구를 시도하지 않고
-            // 네이티브 서비스 생존만 확인 (화면 켜짐 방지)
-            Log.d(TAG, "✅ 정상 상태 유지 중")
+            Log.d(TAG, "✅ 정상 작동 중 (마지막 핑: ${ageMin}분 전) → 추가 조치 없음")
+            // 네이티브 서비스 생존만 확인 (화면 켬 방지)
             SmsWatchdogService.start(context)
         }
     }
@@ -184,21 +184,20 @@ class SmsAlarmReceiver : BroadcastReceiver() {
      */
     private fun triggerSilentRecovery(context: Context) {
         try {
-            // 1. 투명 깨우기 액티비티 실행 (가장 확실한 프로세스 활성화 방식)
-            // '다른 앱 위에 표시' 권한이 있어야 백그라운드에서 실행 가능
-            val wakerIntent = Intent(context, BackgroundWakerActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
-                putExtra("is_background_launch", true)
-            }
-            context.startActivity(wakerIntent)
-            
-            Log.i(TAG, "✅ 투명 깨우기(Waker) 신호 발송")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 복구 실패 (Waker): ${e.message}")
-            // 폴백: 서비스라도 시작 시도
+            // 1. 네이티브 Watchdog 서비스 재시작 (상단바 서비스 갱신)
             SmsWatchdogService.start(context)
+
+            // 2. Headless JS 태스크 실행 (화면 없이 엔진만 기동)
+            val serviceIntent = Intent(context, SilentRecoveryService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+            
+            Log.i(TAG, "✅ 백그라운드 서비스 무음 복구 신호 발송")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 복구 실패: ${e.message}")
         }
     }
 
