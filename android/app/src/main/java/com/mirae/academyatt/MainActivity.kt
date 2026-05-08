@@ -19,26 +19,22 @@ class MainActivity : ReactActivity() {
   }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val isBackground = intent?.getBooleanExtra("is_background_launch", false) == true
-        Log.d(TAG, "MainActivity onCreate - isBackground: $isBackground, action: ${intent?.action}")
+        val action = intent?.action
+        val isLauncher = action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)
         
-        if (isBackground) {
-            // UI 그리기 전에 즉시 숨김
+        // [근본적 해결] 사용자가 직접 아이콘을 누른 것이 아니면 즉시 종료/숨김
+        // 시스템이나 서비스가 실수로라도 화면을 깨우는 것을 원천 차단합니다.
+        if (!isLauncher && action != Intent.ACTION_VIEW) {
+            Log.w(TAG, "❌ 비정상 실행 감지 (Action: $action) → 즉시 숨김")
             window.setWindowAnimations(0)
             moveTaskToBack(true)
+            finish() // 프로세스는 살려두되 액티비티만 죽임
+            return
         }
         
+        Log.d(TAG, "✅ 사용자 실행 확인 (Action: $action)")
         setTheme(R.style.AppTheme)
         super.onCreate(savedInstanceState)
-
-        if (isBackground) {
-            moveTaskToBack(true)
-            // 0.5초 동안 끈질기게 숨기기 시도 (일부 기기 지연 대응)
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({ moveTaskToBack(true) }, 100)
-            handler.postDelayed({ moveTaskToBack(true) }, 500)
-        }
-
         intent?.let { handleIntent(it) }
     }
 

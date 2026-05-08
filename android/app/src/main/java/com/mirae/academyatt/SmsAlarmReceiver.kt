@@ -184,18 +184,12 @@ class SmsAlarmReceiver : BroadcastReceiver() {
      */
     private fun triggerSilentRecovery(context: Context) {
         try {
-            // 1. [핵심] 네이티브 Watchdog 서비스 실행 (백그라운드에서 독자적으로 문자 발송)
+            // [근본적 해결] 엔진(JS)을 깨우지 않고 네이티브 서비스만 실행
+            // 이제 리액트 네이티브 엔진은 사용자가 앱을 직접 켰을 때만 돌아갑니다.
+            // 백그라운드 문자 발송은 SmsWatchdogService(네이티브)가 전담합니다.
             SmsWatchdogService.start(context)
-
-            // 2. Headless JS 서비스 시작 (보조용)
-            val serviceIntent = Intent(context, SilentRecoveryService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
-
-            Log.i(TAG, "✅ [네이티브 무음 모드] 백그라운드 감시 및 발송 엔진 가동")
+            
+            Log.i(TAG, "✅ [완전 무음 모드] 네이티브 감시 서비스 가동")
         } catch (e: Exception) {
             Log.e(TAG, "❌ 복구 실패: ${e.message}")
         }
