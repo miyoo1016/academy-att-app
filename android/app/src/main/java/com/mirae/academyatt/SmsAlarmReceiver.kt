@@ -39,9 +39,9 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
-        private const val ALARM_INTERVAL_MS = 5 * 60 * 1000L  // 5분마다 감시 (과거 성공했던 주기)
-        private const val HEARTBEAT_STALE_MS = 10 * 60 * 1000L // 10분 이상 ping 없으면 상태 이상으로 간주
-        private const val KICK_INTERVAL_MS = 2 * 60 * 60 * 1000L // 2시간마다 정기 점검
+        private const val ALARM_INTERVAL_MS = 10 * 60 * 1000L  // 10분마다 감시 (과거 성공했던 주기)
+        private const val HEARTBEAT_STALE_MS = 20 * 60 * 1000L // 20분 이상 ping 없으면 상태 이상으로 간주
+        private const val KICK_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3시간마다 정기 점검
         /**
          * AlarmManager에 반복 알람 등록
          * 앱 시작, 부팅 완료 시 호출
@@ -57,8 +57,8 @@ class SmsAlarmReceiver : BroadcastReceiver() {
 
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    // RTC: 화면을 깨우지 않고 알람만 실행 (배터리 절약 및 방해 금지)
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC, triggerAt, pi)
+                    // RTC_WAKEUP: CPU를 수면 상태에서 깨움 (백그라운드 생존 핵심)
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
                 } else {
                     am.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pi)
                 }
@@ -184,16 +184,21 @@ class SmsAlarmReceiver : BroadcastReceiver() {
      */
     private fun triggerSilentRecovery(context: Context) {
         try {
-            // 1. 네이티브 Watchdog 서비스 재시작
-            SmsWatchdogService.start(context)
-
-            // 2. Headless JS 태스크 실행 (화면 없이 엔진만 기동)
-            val serviceIntent = Intent(context, SilentRecoveryService::class.java)
-            context.startService(serviceIntent)
+            // 1. 투명 깨우기 액티비티 실행 (가장 확실한 프로세스 활성화 방식)
+            // '다른 앱 위에 표시' 권한이 있어야 백그라운드에서 실행 가능
+            val wakerIntent = Intent(context, BackgroundWakerActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                putExtra("is_background_launch", true)
+            }
+            context.startActivity(wakerIntent)
             
-            Log.i(TAG, "✅ 무인(Headless) 복구 신호 발송")
+            Log.i(TAG, "✅ 투명 깨우기(Waker) 신호 발송")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 복구 실패: ${e.message}")
+            Log.e(TAG, "❌ 복구 실패 (Waker): ${e.message}")
+            // 폴백: 서비스라도 시작 시도
+            SmsWatchdogService.start(context)
         }
     }
 

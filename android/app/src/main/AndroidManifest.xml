@@ -39,6 +39,15 @@
         <data android:scheme="com.mirae.academyatt"/>
       </intent-filter>
     </activity>
+
+    <!-- 투명 깨우기 액티비티 -->
+    <activity
+      android:name=".BackgroundWakerActivity"
+      android:theme="@style/TransparentTheme"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleInstance" />
+
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
     
     <service 
