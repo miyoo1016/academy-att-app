@@ -39,9 +39,9 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsAlarmReceiver"
         const val ACTION_WATCHDOG_ALARM = "com.mirae.academyatt.WATCHDOG_ALARM"
-        private const val ALARM_INTERVAL_MS = 5 * 60 * 1000L  // 5분마다 감시 (과거 성공했던 주기)
-        private const val HEARTBEAT_STALE_MS = 5 * 60 * 1000L // 5분 이상 ping 없으면 상태 이상으로 간주
-        private const val KICK_INTERVAL_MS = 2 * 60 * 60 * 1000L // 2시간마다 정기 점검
+        private const val ALARM_INTERVAL_MS = 10 * 60 * 1000L  // 10분마다 감시 (자극 최소화)
+        private const val HEARTBEAT_STALE_MS = 10 * 60 * 1000L // 10분 이상 ping 없으면 상태 이상
+        private const val KICK_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3시간마다 정기 점검
         /**
          * AlarmManager에 반복 알람 등록
          * 앱 시작, 부팅 완료 시 호출

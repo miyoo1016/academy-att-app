@@ -25,10 +25,10 @@ class MainActivity : ReactActivity() {
         // [근본적 해결] 사용자가 직접 아이콘을 누른 것이 아니면 즉시 종료/숨김
         // 시스템이나 서비스가 실수로라도 화면을 깨우는 것을 원천 차단합니다.
         if (!isLauncher && action != Intent.ACTION_VIEW) {
-            Log.w(TAG, "❌ 비정상 실행 감지 (Action: $action) → 즉시 숨김")
+            Log.w(TAG, "❌ 비정상 실행 감지 (Action: $action) → 흔적 없이 제거")
             window.setWindowAnimations(0)
             moveTaskToBack(true)
-            finish() // 프로세스는 살려두되 액티비티만 죽임
+            finishAndRemoveTask() // 시스템 자동 재시작 방지 핵심
             return
         }
         
