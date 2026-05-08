@@ -8,29 +8,24 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
-import android.telephony.SmsManager
 
 /**
  * SmsAlarmReceiver
  *
  * ─── 왜 이게 필요한가? ────────────────────────────────────────────────────────
  *
- * 기존 구조의 치명적 결함:
- *   1. react-native-background-actions는 JS Thread 위에서 동작
- *   2. Android가 메모리/배터리 압박 시 JS Thread를 suspend(일시정지)
- *   3. JS Thread가 멈추면 Firestore onSnapshot, pingHeartbeat 모두 멈춤
- *   4. Watchdog이 "좀비 감지" 후 startActivity()로 앱 포그라운드 복귀 시도
- *   5. BUT: Android 10+에서 백그라운드 앱의 startActivity()는 OS가 차단함
- *      → 화면이 꺼진 상태에서 실제로 앱이 올라오지 않음 → 문자 계속 미발송
- *
- * 해결 방법:
- *   AlarmManager로 이 BroadcastReceiver를 주기적(5분)으로 깨움.
- *   BroadcastReceiver는 Android 10+에서도 백그라운드에서 실행 가능.
- *   onReceive()에서:
- *     1. WakeLock 획득 (CPU 슬립 방지)
- *     2. JS 서비스 생존 여부 + 하트비트 staleness 확인
- *     3. 좀비 상태면 → RNBackgroundActionsTask 서비스를 직접 재시작
- *     4. 미처리된 SMS가 있는지 SharedPreferences에서 확인하여 발송
+     * 기존 구조의 치명적 결함:
+     *   1. react-native-background-actions는 JS Thread 위에서 동작
+     *   2. Android가 메모리/배터리 압박 시 JS Thread를 suspend(일시정지)
+     *   3. JS Thread를 깨우려는 복구 과정에서 MainActivity가 노출될 수 있음
+     *
+     * 해결 방법:
+     *   AlarmManager로 이 BroadcastReceiver를 주기적(10분)으로 깨움.
+     *   BroadcastReceiver는 Android 10+에서도 백그라운드에서 실행 가능.
+     *   onReceive()에서:
+     *     1. WakeLock 획득 (CPU 슬립 방지)
+     *     2. 네이티브 서비스 생존 여부 + 하트비트 staleness 확인
+     *     3. 이상 상태면 → SmsWatchdogService만 재시작
  *
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -62,7 +57,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
                 } else {
                     am.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pi)
                 }
-                Log.d(TAG, "알람 등록 완료 (5분 후 실행)")
+                Log.d(TAG, "알람 등록 완료 (10분 후 실행)")
             } catch (e: Exception) {
                 Log.e(TAG, "알람 등록 실패: ${e.message}")
                 // 정확한 알람 등록 실패 시 부정확한 방식으로 폴백
@@ -115,12 +110,6 @@ class SmsAlarmReceiver : BroadcastReceiver() {
                     intent.putExtra("is_background_launch", true)
                     handleWatchdogAlarm(context)
                 }
-                Intent.ACTION_BOOT_COMPLETED,
-                Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                    Log.i(TAG, "부팅/업데이트 → 알람 재등록 + 서비스 시작")
-                    SmsWatchdogService.start(context)
-                    scheduleRepeatingAlarm(context)
-                }
             }
         } finally {
             // 처리 완료 후 WakeLock 해제
@@ -131,7 +120,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     }
 
     /**
-     * 핵심 로직: JS 서비스 좀비 상태 확인 및 강제 재시작
+     * 핵심 로직: 네이티브 서비스 상태 확인 및 강제 재시작
      */
     private fun handleWatchdogAlarm(context: Context) {
         Log.d(TAG, "=== Watchdog 알람 실행 ===")
@@ -140,7 +129,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         val ageMs = System.currentTimeMillis() - lastPing
         val ageMin = ageMs / 60_000L
 
-        Log.d(TAG, "마지막 JS 하트비트: ${ageMin}분 전")
+        Log.d(TAG, "마지막 네이티브 하트비트: ${ageMin}분 전")
 
         val isZombie = lastPing > 0L && ageMs > HEARTBEAT_STALE_MS
         val isNeverStarted = lastPing == 0L
@@ -168,19 +157,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
     }
 
     /**
-     * JS 백그라운드 서비스를 네이티브에서 직접 재시작
-     *
-     * RNBackgroundActionsTask는 앱의 MainActivity가 실행되어야 JS가 초기화됨.
-     * 따라서 MainActivity에 특별한 Intent를 보내서 JS 서비스를 재시작시킴.
-     *
-     * Android 10+에서도 BroadcastReceiver → startForegroundService는 허용됨.
-     * (startActivity와 달리 서비스 시작은 백그라운드에서도 가능)
-     */
-    /**
-     * Headless JS를 통해 화면을 띄우지 않고 백그라운드 서비스를 복구/시작함
-     */
-    /**
-     * Headless JS를 통해 화면을 띄우지 않고 백그라운드 서비스를 복구/시작함
+     * 화면을 열지 않고 네이티브 감시 서비스만 복구/시작함
      */
     private fun triggerSilentRecovery(context: Context) {
         try {

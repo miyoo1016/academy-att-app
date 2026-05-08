@@ -1,13 +1,13 @@
 package com.mirae.academyatt
 
-import android.os.Handler
-import android.os.Looper
 import android.telephony.SmsManager
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
-import java.util.*
+import java.net.HttpURLConnection
+import java.net.URL
+import java.time.Instant
 
 /**
  * FcmService - Firebase Cloud Messaging 수신 핸들러 (네이티브)
@@ -19,6 +19,8 @@ class FcmService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "AcademyFcmService"
+        private const val FIREBASE_PROJECT_ID = "attmirae"
+        private const val API_KEY = "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
     }
 
     /**
@@ -27,6 +29,7 @@ class FcmService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         Log.d(TAG, "FCM 메시 수신: from=${remoteMessage.from}")
+        SmsWatchdogService.start(applicationContext)
 
         // 1. Data 페이로드 확인
         if (remoteMessage.data.isNotEmpty()) {
@@ -106,9 +109,9 @@ class FcmService : FirebaseMessagingService() {
         Thread {
             try {
                 // Correct API Key from google-services.json
-                val urlString = "https://firestore.googleapis.com/v1/projects/attmirae/databases/(default)/documents/attendance/$docId?updateMask.fieldPaths=processed&key=AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
-                val url = java.net.URL(urlString)
-                val conn = url.openConnection() as java.net.HttpURLConnection
+                val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId?updateMask.fieldPaths=processed&key=$API_KEY"
+                val url = URL(urlString)
+                val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "PATCH"
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -121,8 +124,40 @@ class FcmService : FirebaseMessagingService() {
                 val responseCode = conn.responseCode
                 Log.i(TAG, "Firestore 업데이트 완료 (ID: $docId), 코드: $responseCode")
                 conn.disconnect()
-            } catch (e: java.lang.Exception) {
+            } catch (e: Exception) {
                 Log.e(TAG, "Firestore 업데이트 실패: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun registerToken(token: String) {
+        Thread {
+            try {
+                val now = Instant.now().toString()
+                val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/device_tokens/main_phone?updateMask.fieldPaths=token&updateMask.fieldPaths=platform&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=lastActive&updateMask.fieldPaths=source&key=$API_KEY"
+                val url = URL(urlString)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "PATCH"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+
+                val body = """
+                    {
+                        "fields": {
+                            "token": {"stringValue": "$token"},
+                            "platform": {"stringValue": "android"},
+                            "updatedAt": {"timestampValue": "$now"},
+                            "lastActive": {"timestampValue": "$now"},
+                            "source": {"stringValue": "native_fcm"}
+                        }
+                    }
+                """.trimIndent()
+
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.i(TAG, "FCM 토큰 네이티브 등록 완료, 코드: ${conn.responseCode}")
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "FCM 토큰 네이티브 등록 실패: ${e.message}")
             }
         }.start()
     }
@@ -133,7 +168,6 @@ class FcmService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         Log.d(TAG, "새 FCM 토큰 생성됨: $token")
-        // 이 토큰은 JS 레이어에서도 감지하겠지만,
-        // 필요하다면 여기서 직접 Firestore에 기록할 수도 있습니다.
+        registerToken(token)
     }
 }

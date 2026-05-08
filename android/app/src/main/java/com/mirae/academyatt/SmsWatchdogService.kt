@@ -13,8 +13,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 import org.json.JSONArray
-import android.os.Handler
-import android.os.Looper
+import java.time.Instant
 
 /**
  * SmsWatchdogService - 경량화된 포그라운드 서비스
@@ -33,11 +32,15 @@ class SmsWatchdogService : Service() {
         private const val API_KEY = "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
 
         fun start(context: Context) {
-            val intent = Intent(context, SmsWatchdogService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                val intent = Intent(context, SmsWatchdogService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Watchdog 시작 실패: ${e.message}")
             }
         }
     }
@@ -84,9 +87,9 @@ class SmsWatchdogService : Service() {
                 val body = """
                     {
                         "fields": {
-                            "lastActive": {"stringValue": "${java.time.Instant.now()}"},
-                            "status": {"stringValue": "running_native_only"},
-                            "platform": {"stringValue": "android"}
+	                            "lastActive": {"timestampValue": "${Instant.now()}"},
+	                            "status": {"stringValue": "running_native_only"},
+	                            "platform": {"stringValue": "android"}
                         }
                     }
                 """.trimIndent()

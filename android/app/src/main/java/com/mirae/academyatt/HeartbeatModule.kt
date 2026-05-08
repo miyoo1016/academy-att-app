@@ -13,21 +13,21 @@ import com.facebook.react.bridge.Promise
 /**
  * HeartbeatModule
  *
- * JS 백그라운드 서비스(SmsBackgroundService.js)에서 3초마다 ping()을 호출.
+ * 네이티브 Watchdog이 생존 신호를 기록한다.
  * SharedPreferences에 현재 타임스탬프를 기록.
  * SmsWatchdogService(Kotlin)와 SmsAlarmReceiver(Kotlin)가 이 값을 읽어서
- * JS 서비스가 진짜로 동작 중인지 판단한다.
+ * 네이티브 감시 서비스가 진짜로 동작 중인지 판단한다.
  *
  * 해결하는 문제:
- * RNBackgroundActionsTask 프로세스는 살아있지만
- * 내부 Firebase 리스너가 죽은 "좀비 상태"를 Watchdog이 감지하게 해준다.
+ * 포그라운드 서비스 프로세스는 살아있지만
+ * 내부 폴링 루프가 죽은 "좀비 상태"를 Watchdog이 감지하게 해준다.
  */
 class HeartbeatModule(reactContext: ReactApplicationContext)
     : ReactContextBaseJavaModule(reactContext) {
 
     override fun getName() = "HeartbeatModule"
 
-    /** JS 서비스 루프에서 매 3초 호출 — ping 시각 갱신 */
+    /** JS에서 상태 확인용으로 호출할 수 있는 ping 시각 갱신 */
     @ReactMethod
     fun ping() {
         val prefs = reactApplicationContext
@@ -93,7 +93,7 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
         const val KEY_PING   = "last_ping"
         const val KEY_LAST_KICK = "last_kick_time"
 
-        /** JS 서비스 생존 확인 시각 갱신 (SmsAlarmReceiver에서 호출 가능하도록) */
+        /** 서비스 생존 확인 시각 갱신 (SmsAlarmReceiver에서 호출 가능하도록) */
         fun updateLastKick(context: Context) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().putLong(KEY_LAST_KICK, System.currentTimeMillis()).apply()
@@ -111,10 +111,15 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
             return prefs.getLong(KEY_PING, 0L)
         }
 
+        /** 순수 네이티브 Watchdog 생존 확인 시각 갱신 */
+        fun pingHeartbeat(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putLong(KEY_PING, System.currentTimeMillis()).apply()
+        }
+
         /**
          * ping 값을 0으로 초기화하여 다음 Watchdog 사이클에서
          * lastPing == 0L → "아직 시작 안 됨" 으로 인식되게 함.
-         * SmsAlarmReceiver가 강제 재시작 후 호출하여 JS가 다시 ping하도록 유도.
          */
         fun resetPing(context: Context) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

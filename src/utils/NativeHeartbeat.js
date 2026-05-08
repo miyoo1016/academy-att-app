@@ -2,21 +2,18 @@
  * NativeHeartbeat.js
  * JS → Android SharedPreferences 하트비트 브릿지
  *
- * SmsBackgroundService 루프에서 3초마다 ping()을 호출하면
- * Kotlin SmsWatchdogService가 SharedPreferences를 읽어
- * JS 서비스가 실제로 살아있는지 확인한다.
+ * 예전 JS 백그라운드 서비스에서 사용하던 하트비트 헬퍼입니다.
+ * 현재 백그라운드 감시는 Kotlin SmsWatchdogService가 직접 담당합니다.
  *
  * 왜 필요한가:
- * RNBackgroundActionsTask 서비스는 실행 중이지만
- * 내부 Firebase 리스너가 죽은 "좀비 상태"를 Watchdog이
- * 기존엔 감지하지 못했다. 이 하트비트로 감지 가능해진다.
+ * 수동 진단이나 이전 코드 호환용으로만 남겨둡니다.
  */
 import { NativeModules, Platform } from 'react-native';
 
 const { HeartbeatModule } = NativeModules;
 
 /**
- * JS 서비스가 살아있음을 네이티브에 알린다.
+ * JS가 살아있음을 네이티브에 알린다.
  * Android 전용. 에러는 조용히 무시한다.
  */
 export const pingHeartbeat = () => {

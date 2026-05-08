@@ -180,25 +180,12 @@ const options = {
   parameters: { delay: 10000 },
 };
 
+// FCM과 Native Watchdog이 모든 발송을 담당하므로 JS 백그라운드 서비스는 더 이상 필요 없음.
+// 이 함수는 기존 호환성을 위해 남기지만 아무것도 하지 않음.
 export const startSmsBackgroundService = async () => {
-  if (Platform.OS !== 'android') return;
-  try {
-    if (!BackgroundService.isRunning()) {
-      await BackgroundService.start(backgroundTask, options);
-      console.log('[BgService] FCM 하이브리드 서비스 시작');
-    }
-  } catch (e) {
-    console.error('[BgService] 서비스 시작 실패:', e);
-  }
+  console.log('[BgService] FCM 단독 모드로 전환 — JS 서비스는 더 이상 사용되지 않습니다.');
 };
 
 export const stopSmsBackgroundService = async () => {
-  if (Platform.OS !== 'android') return;
-  try {
-    if (BackgroundService.isRunning()) {
-      await BackgroundService.stop();
-    }
-  } catch (e) {
-    console.error('[BgService] 서비스 중지 실패:', e);
-  }
+  console.log('[BgService] 서비스 중지');
 };

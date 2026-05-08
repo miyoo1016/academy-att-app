@@ -54,7 +54,7 @@ class MainApplication : Application(), ReactApplication {
     // 1. 순수 네이티브 Watchdog 서비스 시작 (30초 주기 감시)
     SmsWatchdogService.start(this)
 
-    // 2. AlarmManager 기반 감시 시작 (5분 주기, Doze 모드 관통)
+    // 2. AlarmManager 기반 감시 시작 (10분 주기, Doze 모드 관통)
     // Android 10+에서 startActivity가 차단될 때도 독립적으로 동작
     SmsAlarmReceiver.scheduleRepeatingAlarm(this)
   }

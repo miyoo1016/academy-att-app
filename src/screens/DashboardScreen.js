@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import BackgroundService from 'react-native-background-actions';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  SafeAreaView, FlatList, Alert, Platform
+  SafeAreaView, FlatList, Alert, Platform, AppState
 } from 'react-native';
 import {
   collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp, addDoc
@@ -11,7 +10,6 @@ import { db } from '../config/firebase';
 import initialStudents from '../config/initial_students.json';
 import { buildCheckinMessage, buildCheckoutMessage, buildBirthdayMessage, sendAttendanceSMS } from '../utils/smsUtils';
 import { formatDateForDB } from '../utils/timeUtils';
-import { startSmsBackgroundService } from '../tasks/SmsBackgroundService';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -19,7 +17,6 @@ const RED = '#C62828';
 
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
-  const [isServiceRunning, setIsServiceRunning] = useState(false);
   const [serviceInfo, setServiceInfo] = useState({ lastActive: null, status: 'unknown' });
   const [refreshTrigger, setRefreshTrigger] = useState(0); // 화면 강제 갱신용
   const processedIds = useRef(new Set());
@@ -35,9 +32,6 @@ export default function DashboardScreen({ navigation }) {
   };
 
   useEffect(() => {
-    // 자동 발송 백그라운드 태스크 시작
-    startSmsBackgroundService();
-
     // 1. 출결 데이터 리스너
     const attRef = collection(db, 'attendance');
     const q = query(attRef, where('date', '==', today));
@@ -60,8 +54,14 @@ export default function DashboardScreen({ navigation }) {
     const unsubscribeStatus = onSnapshot(statusRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
+        const rawLastActive = data.lastActive;
+        const lastActive = rawLastActive?.toDate
+          ? rawLastActive.toDate()
+          : rawLastActive
+            ? new Date(rawLastActive)
+            : null;
         setServiceInfo({
-          lastActive: data.lastActive?.toDate() || null,
+          lastActive: Number.isNaN(lastActive?.getTime()) ? null : lastActive,
           status: data.status || 'unknown'
         });
       }
@@ -72,9 +72,8 @@ export default function DashboardScreen({ navigation }) {
       if (AppState.currentState === 'active') {
         if (!serviceCheckInterval) {
           serviceCheckInterval = setInterval(() => {
-            setIsServiceRunning(BackgroundService.isRunning());
             setRefreshTrigger(prev => prev + 1);
-          }, 1000);
+          }, 30000);
         }
       } else {
         if (serviceCheckInterval) {
@@ -189,6 +188,10 @@ export default function DashboardScreen({ navigation }) {
 
   const checkinCount = todayRecords.filter(r => r.type === 'checkin').length;
   const checkoutCount = todayRecords.filter(r => r.type === 'checkout').length;
+  const isServiceRunning = serviceInfo.lastActive
+    ? Date.now() - serviceInfo.lastActive.getTime() < 20 * 60 * 1000
+    : false;
+  void refreshTrigger;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -227,8 +230,8 @@ export default function DashboardScreen({ navigation }) {
       <View style={[styles.statusBanner, isServiceRunning ? styles.statusActive : styles.statusInactive]}>
         <View style={[styles.statusDot, { backgroundColor: isServiceRunning ? '#4CAF50' : '#F44336' }]} />
         <View style={{ flex: 1 }}>
-          <Text style={styles.statusText}>
-            {isServiceRunning ? '실시간 출결 감시 서비스 가동 중' : '감시 서비스 중지됨 (앱 재시작 필요)'}
+          <Text style={[styles.statusText, !isServiceRunning && styles.statusInactiveText]}>
+            {isServiceRunning ? '실시간 출결 감시 서비스 가동 중' : '감시 서비스 확인 필요'}
           </Text>
           {isServiceRunning && (
             <Text style={{ fontSize: 11, color: '#666' }}>
