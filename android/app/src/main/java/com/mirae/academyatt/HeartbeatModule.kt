@@ -2,9 +2,12 @@ package com.mirae.academyatt
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -42,12 +45,44 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
         promise.resolve(prefs.getLong(KEY_PING, 0L).toDouble())
     }
 
+    /** JS 앱 실행/복귀 시 네이티브 Watchdog을 다시 시작하고 미발송분 처리를 트리거 */
+    @ReactMethod
+    fun startWatchdog() {
+        SmsWatchdogService.start(reactApplicationContext, "app")
+        SmsWatchdogService.processPendingNow(reactApplicationContext, "app")
+    }
+
     /** 배터리 최적화 제외 여부 확인 */
     @ReactMethod
     fun isIgnoringBatteryOptimizations(promise: Promise) {
         val pm = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
         val packageName = reactApplicationContext.packageName
         promise.resolve(pm.isIgnoringBatteryOptimizations(packageName))
+    }
+
+    /** SMS 발송 권한 여부 */
+    @ReactMethod
+    fun hasSmsPermission(promise: Promise) {
+        promise.resolve(
+            ContextCompat.checkSelfPermission(
+                reactApplicationContext,
+                android.Manifest.permission.SEND_SMS
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    /** 알림 권한 여부. Android 13 미만은 앱 알림 차단 여부를 확인한다. */
+    @ReactMethod
+    fun hasNotificationPermission(promise: Promise) {
+        val enabled = if (Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(
+                reactApplicationContext,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            NotificationManagerCompat.from(reactApplicationContext).areNotificationsEnabled()
+        }
+        promise.resolve(enabled)
     }
 
     /** 배터리 최적화 제외 요청 창 띄우기 */
@@ -57,6 +92,12 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
         val packageName = reactApplicationContext.packageName
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
             val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactApplicationContext.startActivity(intent)
+        } else {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.parse("package:$packageName")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

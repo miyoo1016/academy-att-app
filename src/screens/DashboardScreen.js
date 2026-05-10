@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  SafeAreaView, FlatList, Alert, Platform, AppState
+  SafeAreaView, FlatList, Alert, Platform, AppState, NativeModules
 } from 'react-native';
 import {
   collection, query, where, onSnapshot, doc, updateDoc, getDoc, getDocs, setDoc, serverTimestamp, addDoc
@@ -14,10 +14,17 @@ import { formatDateForDB } from '../utils/timeUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const RED = '#C62828';
+const { HeartbeatModule } = NativeModules;
 
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
   const [serviceInfo, setServiceInfo] = useState({ lastActive: null, status: 'unknown' });
+  const [pendingRecords, setPendingRecords] = useState([]);
+  const [permissionInfo, setPermissionInfo] = useState({
+    battery: null,
+    sms: null,
+    notifications: null,
+  });
   const [refreshTrigger, setRefreshTrigger] = useState(0); // 화면 강제 갱신용
   const processedIds = useRef(new Set());
   const today = formatDateForDB();
@@ -49,6 +56,19 @@ export default function DashboardScreen({ navigation }) {
       setTodayRecords(all);
     });
 
+    const pendingQuery = query(attRef, where('processed', '==', false));
+    const unsubscribePending = onSnapshot(pendingQuery, snapshot => {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 2);
+      const cutoffStr = formatDateForDB(cutoff);
+      const pending = [];
+      snapshot.forEach(d => {
+        const data = { id: d.id, ...d.data() };
+        if (!data.date || data.date >= cutoffStr) pending.push(data);
+      });
+      setPendingRecords(pending);
+    });
+
     // 2. 서비스 하트비트 상태 리스너
     const statusRef = doc(db, 'service_status', 'main_terminal');
     const unsubscribeStatus = onSnapshot(statusRef, (snap) => {
@@ -62,7 +82,12 @@ export default function DashboardScreen({ navigation }) {
             : null;
         setServiceInfo({
           lastActive: Number.isNaN(lastActive?.getTime()) ? null : lastActive,
-          status: data.status || 'unknown'
+          status: data.status || 'unknown',
+          watchdogLastRun: parseFirestoreDate(data.watchdogLastRun),
+          lastSmsSuccessAt: parseFirestoreDate(data.lastSmsSuccessAt),
+          lastError: data.lastError || '',
+          pendingCount: data.pendingCount ?? null,
+          lastRunSource: data.lastRunSource || '',
         });
       }
     });
@@ -85,6 +110,7 @@ export default function DashboardScreen({ navigation }) {
 
     const appStateSub = AppState.addEventListener('change', updateInterval);
     updateInterval(); // 초기 실행
+    refreshPermissions();
 
     const checkAndAutoImportStudents = async () => {
       try {
@@ -122,11 +148,41 @@ export default function DashboardScreen({ navigation }) {
 
     return () => {
       unsubscribeAtt();
+      unsubscribePending();
       unsubscribeStatus();
       if (serviceCheckInterval) clearInterval(serviceCheckInterval);
       appStateSub.remove();
     };
   }, []);
+
+  const parseFirestoreDate = (value) => {
+    if (!value) return null;
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    return Number.isNaN(date?.getTime()) ? null : date;
+  };
+
+  const refreshPermissions = async () => {
+    if (Platform.OS !== 'android') return;
+    try {
+      const [battery, sms, notifications] = await Promise.all([
+        HeartbeatModule?.isIgnoringBatteryOptimizations?.(),
+        HeartbeatModule?.hasSmsPermission?.(),
+        HeartbeatModule?.hasNotificationPermission?.(),
+      ]);
+      setPermissionInfo({ battery: !!battery, sms: !!sms, notifications: !!notifications });
+    } catch (e) {
+      console.error('권한 상태 확인 오류:', e);
+    }
+  };
+
+  const openBatterySettings = async () => {
+    try {
+      await HeartbeatModule?.requestIgnoreBatteryOptimizations?.();
+      setTimeout(refreshPermissions, 1000);
+    } catch (e) {
+      showAlert('오류', '배터리 최적화 설정 화면을 열지 못했습니다.');
+    }
+  };
 
   // 시간차 계산 함수
   const getTimeDiffText = (date) => {
@@ -153,14 +209,40 @@ export default function DashboardScreen({ navigation }) {
     if (sent) {
       await markProcessed(record.id);
       showAlert('성공', '문자가 성공적으로 발송되었습니다.');
+    } else {
+      await markFailed(record.id, '수동 재발송 실패');
     }
   };
 
   const markProcessed = async (recordId) => {
     try {
-      await updateDoc(doc(db, 'attendance', recordId), { processed: true });
+      await updateDoc(doc(db, 'attendance', recordId), {
+        processed: true,
+        sending: false,
+        sentAt: serverTimestamp(),
+        sentByDevice: 'manual_admin',
+        sendSource: 'manual',
+        lastError: null,
+      });
     } catch (e) {
       console.error('processed 업데이트 오류:', e);
+    }
+  };
+
+  const markFailed = async (recordId, error) => {
+    try {
+      const recordRef = doc(db, 'attendance', recordId);
+      const snap = await getDoc(recordRef);
+      const currentRetry = snap.exists() ? (snap.data().retryCount || 0) : 0;
+      await updateDoc(recordRef, {
+        processed: false,
+        sending: false,
+        retryCount: currentRetry + 1,
+        lastError: error,
+        lastAttemptAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('실패 기록 업데이트 오류:', e);
     }
   };
 
@@ -191,6 +273,9 @@ export default function DashboardScreen({ navigation }) {
   const isServiceRunning = serviceInfo.lastActive
     ? Date.now() - serviceInfo.lastActive.getTime() < 20 * 60 * 1000
     : false;
+  const failedRetryCount = pendingRecords.filter(r => (r.retryCount || 0) > 0 || r.lastError).length;
+  const hasRiskySettings = Platform.OS === 'android'
+    && (permissionInfo.battery === false || permissionInfo.sms === false || permissionInfo.notifications === false);
   void refreshTrigger;
 
   return (
@@ -245,10 +330,25 @@ export default function DashboardScreen({ navigation }) {
       {/* 배터리 최적화 안내 (안드로이드 전용) */}
       {Platform.OS === 'android' && (
         <View style={styles.batteryNotice}>
-          <Text style={styles.batteryNoticeTitle}>⚠️ 안정적인 백그라운드 작동을 위한 설정</Text>
-          <Text style={styles.batteryNoticeDesc}>
-            시스템 설정에서 이 앱의 [배터리 최적화]를 "제한 없음"으로 설정해야 26시간 이상 끊김 없이 문자가 발송됩니다.
+          <Text style={styles.batteryNoticeTitle}>
+            {hasRiskySettings ? '설정 필요 / 장기 방치 시 위험' : '백그라운드 설정 상태'}
           </Text>
+          <Text style={styles.batteryNoticeDesc}>
+            삼성 Deep Sleep, App Standby, 배터리 제한이 켜지면 앱 코드만으로 100% 즉시 발송을 보장할 수 없습니다.
+          </Text>
+          <View style={styles.diagnosticGrid}>
+            <Text style={styles.diagnosticText}>미발송: {pendingRecords.length}건</Text>
+            <Text style={styles.diagnosticText}>실패/재시도: {failedRetryCount}건</Text>
+            <Text style={styles.diagnosticText}>Watchdog: {getTimeDiffText(serviceInfo.watchdogLastRun)}</Text>
+            <Text style={styles.diagnosticText}>최근 성공: {getTimeDiffText(serviceInfo.lastSmsSuccessAt)}</Text>
+            <Text style={styles.diagnosticText}>SMS 권한: {permissionInfo.sms ? '허용' : '확인 필요'}</Text>
+            <Text style={styles.diagnosticText}>알림 권한: {permissionInfo.notifications ? '허용' : '확인 필요'}</Text>
+            <Text style={styles.diagnosticText}>배터리 제한: {permissionInfo.battery ? '제외됨' : '설정 필요'}</Text>
+            <Text style={styles.diagnosticText}>마지막 오류: {serviceInfo.lastError || '없음'}</Text>
+          </View>
+          <TouchableOpacity style={styles.settingsBtn} onPress={openBatterySettings}>
+            <Text style={styles.settingsBtnText}>배터리 최적화 제외 설정 열기</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -386,4 +486,25 @@ const styles = StyleSheet.create({
   },
   batteryNoticeTitle: { fontSize: 14, fontWeight: 'bold', color: '#827717', marginBottom: 2 },
   batteryNoticeDesc: { fontSize: 12, color: '#9E9D24', lineHeight: 18 },
+  diagnosticGrid: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  diagnosticText: {
+    width: '48%',
+    fontSize: 12,
+    color: '#5D5A12',
+    lineHeight: 18,
+  },
+  settingsBtn: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    backgroundColor: '#1565C0',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  settingsBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 });

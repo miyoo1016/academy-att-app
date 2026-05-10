@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, BackHandler, ToastAndroid, PermissionsAndroid, AppState, NativeModules } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,6 +13,7 @@ import AddStudentScreen from './src/screens/AddStudentScreen';
 import { setupFcmToken, subscribeToTokenRefresh } from './src/utils/FcmSetup';
 
 const Stack = createStackNavigator();
+const { HeartbeatModule } = NativeModules;
 
 export default function App() {
   const [appMode, setAppMode] = useState(null); // null=로딩, 'student', 'admin', 'unset'
@@ -43,6 +44,7 @@ export default function App() {
             }
 
           // FCM 설정 (주 단말기 토큰 등록)
+          HeartbeatModule?.startWatchdog?.();
           await setupFcmToken();
           subscribeToTokenRefresh();
         } catch (e) {
@@ -67,8 +69,15 @@ export default function App() {
 
     initApp();
 
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (Platform.OS === 'android' && state === 'active') {
+        HeartbeatModule?.startWatchdog?.();
+      }
+    });
+
     return () => {
       BackHandler.removeEventListener('hardwareBackPress', handleBackPress);
+      appStateSub.remove();
     };
   }, []);
 

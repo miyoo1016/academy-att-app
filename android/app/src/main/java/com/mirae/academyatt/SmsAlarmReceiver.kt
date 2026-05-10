@@ -151,8 +151,8 @@ class SmsAlarmReceiver : BroadcastReceiver() {
             triggerSilentRecovery(context)
         } else {
             Log.d(TAG, "✅ 정상 작동 중 (마지막 핑: ${ageMin}분 전) → 추가 조치 없음")
-            // 네이티브 서비스 생존만 확인 (화면 켬 방지)
-            SmsWatchdogService.start(context)
+            SmsWatchdogService.start(context, "alarm")
+            SmsWatchdogService.processPendingNow(context, "alarm")
         }
     }
 
@@ -164,7 +164,8 @@ class SmsAlarmReceiver : BroadcastReceiver() {
             // [근본적 해결] 엔진(JS)을 깨우지 않고 네이티브 서비스만 실행
             // 이제 리액트 네이티브 엔진은 사용자가 앱을 직접 켰을 때만 돌아갑니다.
             // 백그라운드 문자 발송은 SmsWatchdogService(네이티브)가 전담합니다.
-            SmsWatchdogService.start(context)
+            SmsWatchdogService.start(context, "alarm_recovery")
+            SmsWatchdogService.processPendingNow(context, "alarm_recovery")
             
             Log.i(TAG, "✅ [완전 무음 모드] 네이티브 감시 서비스 가동")
         } catch (e: Exception) {

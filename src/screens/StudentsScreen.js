@@ -121,6 +121,7 @@ export default function StudentsScreen({ navigation }) {
             style={styles.addBtn}
             onPress={() => navigation.navigate('AddStudent', { student: null })}
           >
+            <Text style={styles.addBtnText}>+ 추가</Text>
         </TouchableOpacity>
       </View>
 

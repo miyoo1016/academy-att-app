@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// TODO: 운영 안정화 후 관리자 비밀번호를 원격 설정/보안 저장소로 분리하세요.
 const ADMIN_PASSWORD = '0000'; // 관리자 비밀번호 (기본값: 0000)
 
 export default function ModeSelectScreen({ onModeSelect }) {
