@@ -30,14 +30,14 @@ import java.time.Instant
 class SmsWatchdogService : Service() {
 
     companion object {
-        private const val TAG = "SmsWatchdog"
+        const val TAG = "SmsWatchdog"
         private const val CHANNEL_ID = "academy_watchdog_channel"
         private const val NOTIFICATION_ID = 9999
-        private const val FIREBASE_PROJECT_ID = "attmirae"
-        private const val API_KEY = "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
+        const val FIREBASE_PROJECT_ID = "attmirae"
+        const val API_KEY = "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
         private const val LOOKBACK_DAYS = 3L
         private const val CLAIM_STALE_MS = 5 * 60 * 1000L
-        private const val DEVICE_ID = "main_phone_android"
+        const val DEVICE_ID = "main_phone_android"
 
         fun start(context: Context, source: String = "watchdog") {
             try {
@@ -51,6 +51,11 @@ class SmsWatchdogService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Watchdog 시작 실패: ${e.message}")
+                writeWatchdogStatus(
+                    context,
+                    "start_failed",
+                    lastError = "${e.javaClass.simpleName}: ${e.message}"
+                )
             }
         }
 
@@ -58,6 +63,99 @@ class SmsWatchdogService : Service() {
             Thread {
                 SmsWatchdogService().processPendingMessages(context.applicationContext, source)
             }.start()
+        }
+
+        fun buildAttendanceMessage(studentName: String, type: String, time: String): String {
+            return if (type == "checkin") {
+                "[미래학원] $time $studentName 원생이 등원하였습니다. 최선을 다해 지도하겠습니다."
+            } else {
+                "[미래학원] $time $studentName 원생이 공부를 마치고 귀가할 예정입니다."
+            }
+        }
+
+        fun markSuccess(docId: String, source: String) {
+            val now = Instant.now().toString()
+            val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId" +
+                "?updateMask.fieldPaths=processed&updateMask.fieldPaths=sending&updateMask.fieldPaths=sentAt&updateMask.fieldPaths=sentByDevice&updateMask.fieldPaths=sendSource&updateMask.fieldPaths=lastError&key=$API_KEY"
+            val body = """
+                {"fields":{
+                    "processed":{"booleanValue":true},
+                    "sending":{"booleanValue":false},
+                    "sentAt":{"timestampValue":"$now"},
+                    "sentByDevice":{"stringValue":"$DEVICE_ID"},
+                    "sendSource":{"stringValue":"$source"},
+                    "lastError":{"nullValue":null}
+                }}
+            """.trimIndent()
+            patchJson(urlString, body)
+        }
+
+        fun markFailure(docId: String, retryCount: Int, error: String) {
+            val now = Instant.now().toString()
+            val safeError = JSONObject.quote(error.take(500))
+            val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId" +
+                "?updateMask.fieldPaths=processed&updateMask.fieldPaths=sending&updateMask.fieldPaths=retryCount&updateMask.fieldPaths=lastError&updateMask.fieldPaths=lastAttemptAt&key=$API_KEY"
+            val body = """
+                {"fields":{
+                    "processed":{"booleanValue":false},
+                    "sending":{"booleanValue":false},
+                    "retryCount":{"integerValue":"$retryCount"},
+                    "lastError":{"stringValue":$safeError},
+                    "lastAttemptAt":{"timestampValue":"$now"}
+                }}
+            """.trimIndent()
+            patchJson(urlString, body)
+        }
+
+        fun writeWatchdogStatus(
+            context: Context,
+            result: String,
+            startedAt: String? = null,
+            finishedAt: String? = null,
+            processedQueueCount: Int? = null,
+            claimedCount: Int? = null,
+            successCount: Int? = null,
+            failureCount: Int? = null,
+            lastError: String? = null,
+            lastSmsSuccessAt: String? = null
+        ) {
+            Thread {
+                try {
+                    val fields = JSONObject()
+                    fields.put("updatedAt", JSONObject().put("timestampValue", Instant.now().toString()))
+                    fields.put("lastWatchdogResult", JSONObject().put("stringValue", result))
+                    startedAt?.let { fields.put("lastWatchdogStartedAt", JSONObject().put("timestampValue", it)) }
+                    finishedAt?.let { fields.put("lastWatchdogFinishedAt", JSONObject().put("timestampValue", it)) }
+                    processedQueueCount?.let { fields.put("processedQueueCount", JSONObject().put("integerValue", it.toString())) }
+                    claimedCount?.let { fields.put("claimedCount", JSONObject().put("integerValue", it.toString())) }
+                    successCount?.let { fields.put("successCount", JSONObject().put("integerValue", it.toString())) }
+                    failureCount?.let { fields.put("failureCount", JSONObject().put("integerValue", it.toString())) }
+                    lastError?.let { fields.put("lastError", JSONObject().put("stringValue", it.take(500))) }
+                    lastSmsSuccessAt?.let { fields.put("lastSmsSuccessAt", JSONObject().put("timestampValue", it)) }
+                    val masks = fields.keys().asSequence().joinToString("") { "&updateMask.fieldPaths=$it" }
+                    val body = JSONObject().put("fields", fields).toString()
+                    patchJson("https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/watchdogStatus/main_terminal?$masks&key=$API_KEY", body)
+                    HeartbeatModule.pingHeartbeat(context)
+                } catch (e: Exception) {
+                    Log.e(TAG, "watchdogStatus 기록 실패: ${e.message}")
+                }
+            }.start()
+        }
+
+        fun patchJson(urlString: String, body: String): Int {
+            val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                requestMethod = "PATCH"
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val responseCode = conn.responseCode
+            if (responseCode !in 200..299) {
+                val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                Log.w(TAG, "Firestore PATCH 실패 $responseCode: $err")
+            }
+            conn.disconnect()
+            return responseCode
         }
     }
 
@@ -124,42 +222,83 @@ class SmsWatchdogService : Service() {
     }
 
     private fun processPendingMessages(context: Context, source: String) {
+        val startedAt = Instant.now().toString()
+        var queueCount = 0
+        var claimedCount = 0
+        var failureCount = 0
+        var lastError: String? = null
         try {
             Log.d(TAG, "🔍 미발송 재처리 시작: source=$source")
             HeartbeatModule.pingHeartbeat(context)
+            writeWatchdogStatus(context, "started:$source", startedAt = startedAt)
             val docs = fetchPendingAttendance()
+            queueCount = docs.size
             updateServiceStatus(context, source, pendingCount = docs.size)
 
             for (doc in docs) {
                 val fields = doc.optJSONObject("fields") ?: continue
                 val docId = doc.getString("name").split("/").last()
                 if (!isRecentEnough(fields)) continue
+                val isStale = isStaleClaim(fields)
                 if (!isClaimAvailable(fields)) continue
-                if (!claimAttendance(docId, doc.optString("updateTime"), source)) continue
+                val previousClaimedBy = stringField(fields, "claimedBy", "")
+                if (!claimAttendance(docId, doc.optString("updateTime"), source, isStale, previousClaimedBy)) continue
+                claimedCount++
 
                 try {
                     val studentName = stringField(fields, "studentName", "학생")
                     val type = stringField(fields, "type", "checkin")
                     val time = stringField(fields, "time", "")
                     val phones = phoneList(fields)
+                    val retryCount = intField(fields, "retryCount", 0)
 
                     if (phones.isEmpty()) {
                         throw IllegalStateException("등록된 학부모 연락처 없음")
                     }
 
-                    sendSmsToAll(context, phones, buildAttendanceMessage(studentName, type, time))
-                    markSuccess(docId, source)
-                    updateServiceStatus(context, source, lastSmsSuccessAt = Instant.now().toString())
-                    Log.i(TAG, "✅ 미발송 재처리 성공: $studentName ($docId)")
+                    val expectedResults = sendSmsToAll(
+                        context,
+                        docId,
+                        source,
+                        retryCount,
+                        phones,
+                        buildAttendanceMessage(studentName, type, time)
+                    )
+                    Log.i(TAG, "📨 SMS 발송 요청 완료, 결과 대기: $studentName ($docId), resultIntents=$expectedResults")
                 } catch (e: Exception) {
                     val retryCount = intField(fields, "retryCount", 0)
+                    failureCount++
+                    lastError = "${e.javaClass.simpleName}: ${e.message}"
                     markFailure(docId, retryCount + 1, e.message ?: e.toString())
                     updateServiceStatus(context, source, lastError = e.message ?: e.toString())
                     Log.e(TAG, "❌ 미발송 재처리 실패: $docId / ${e.message}")
                 }
             }
+            writeWatchdogStatus(
+                context,
+                if (failureCount > 0) "finished_with_failures:$source" else "finished:$source",
+                startedAt = startedAt,
+                finishedAt = Instant.now().toString(),
+                processedQueueCount = queueCount,
+                claimedCount = claimedCount,
+                successCount = 0,
+                failureCount = failureCount,
+                lastError = lastError
+            )
         } catch (e: Exception) {
+            lastError = "${e.javaClass.simpleName}: ${e.message}"
             updateServiceStatus(context, source, lastError = e.message ?: e.toString())
+            writeWatchdogStatus(
+                context,
+                "failed:$source",
+                startedAt = startedAt,
+                finishedAt = Instant.now().toString(),
+                processedQueueCount = queueCount,
+                claimedCount = claimedCount,
+                successCount = 0,
+                failureCount = failureCount + 1,
+                lastError = lastError
+            )
             Log.e(TAG, "❌ 미발송 재처리 전체 오류: ${e.message}")
         }
     }
@@ -189,55 +328,29 @@ class SmsWatchdogService : Service() {
         return docs
     }
 
-    private fun claimAttendance(docId: String, updateTime: String, source: String): Boolean {
+    private fun claimAttendance(
+        docId: String,
+        updateTime: String,
+        source: String,
+        isStale: Boolean,
+        previousClaimedBy: String
+    ): Boolean {
         val now = Instant.now().toString()
         val encodedUpdateTime = URLEncoder.encode(updateTime, "UTF-8")
+        val fields = JSONObject()
+        fields.put("sending", JSONObject().put("booleanValue", true))
+        fields.put("claimedAt", JSONObject().put("timestampValue", now))
+        fields.put("claimedBy", JSONObject().put("stringValue", DEVICE_ID))
+        fields.put("sendSource", JSONObject().put("stringValue", source))
+        if (isStale) {
+            fields.put("staleRecoveredAt", JSONObject().put("timestampValue", now))
+            fields.put("previousClaimedBy", JSONObject().put("stringValue", previousClaimedBy))
+        }
+        val masks = fields.keys().asSequence().joinToString("") { "&updateMask.fieldPaths=$it" }
         val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId" +
-            "?updateMask.fieldPaths=sending&updateMask.fieldPaths=claimedAt&updateMask.fieldPaths=claimedBy&updateMask.fieldPaths=sendSource" +
-            "&currentDocument.updateTime=$encodedUpdateTime&key=$API_KEY"
-        val body = """
-            {"fields":{
-                "sending":{"booleanValue":true},
-                "claimedAt":{"timestampValue":"$now"},
-                "claimedBy":{"stringValue":"$DEVICE_ID"},
-                "sendSource":{"stringValue":"$source"}
-            }}
-        """.trimIndent()
+            "?$masks&currentDocument.updateTime=$encodedUpdateTime&key=$API_KEY"
+        val body = JSONObject().put("fields", fields).toString()
         return patchJson(urlString, body) in 200..299
-    }
-
-    private fun markSuccess(docId: String, source: String) {
-        val now = Instant.now().toString()
-        val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId" +
-            "?updateMask.fieldPaths=processed&updateMask.fieldPaths=sending&updateMask.fieldPaths=sentAt&updateMask.fieldPaths=sentByDevice&updateMask.fieldPaths=sendSource&updateMask.fieldPaths=lastError&key=$API_KEY"
-        val body = """
-            {"fields":{
-                "processed":{"booleanValue":true},
-                "sending":{"booleanValue":false},
-                "sentAt":{"timestampValue":"$now"},
-                "sentByDevice":{"stringValue":"$DEVICE_ID"},
-                "sendSource":{"stringValue":"$source"},
-                "lastError":{"nullValue":null}
-            }}
-        """.trimIndent()
-        patchJson(urlString, body)
-    }
-
-    private fun markFailure(docId: String, retryCount: Int, error: String) {
-        val now = Instant.now().toString()
-        val safeError = JSONObject.quote(error.take(500))
-        val urlString = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/attendance/$docId" +
-            "?updateMask.fieldPaths=processed&updateMask.fieldPaths=sending&updateMask.fieldPaths=retryCount&updateMask.fieldPaths=lastError&updateMask.fieldPaths=lastAttemptAt&key=$API_KEY"
-        val body = """
-            {"fields":{
-                "processed":{"booleanValue":false},
-                "sending":{"booleanValue":false},
-                "retryCount":{"integerValue":"$retryCount"},
-                "lastError":{"stringValue":$safeError},
-                "lastAttemptAt":{"timestampValue":"$now"}
-            }}
-        """.trimIndent()
-        patchJson(urlString, body)
     }
 
     private fun updateServiceStatus(
@@ -273,12 +386,23 @@ class SmsWatchdogService : Service() {
     private fun isClaimAvailable(fields: JSONObject): Boolean {
         val sending = fields.optJSONObject("sending")?.optBoolean("booleanValue") == true
         if (!sending) return true
+        return isStaleClaim(fields)
+    }
+
+    private fun isStaleClaim(fields: JSONObject): Boolean {
         val claimedAt = fields.optJSONObject("claimedAt")?.optString("timestampValue") ?: return true
         val claimedMs = runCatching { Instant.parse(claimedAt).toEpochMilli() }.getOrDefault(0L)
         return System.currentTimeMillis() - claimedMs > CLAIM_STALE_MS
     }
 
-    private fun sendSmsToAll(context: Context, phones: List<String>, message: String) {
+    private fun sendSmsToAll(
+        context: Context,
+        docId: String,
+        source: String,
+        retryCount: Int,
+        phones: List<String>,
+        message: String
+    ): Int {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
             throw SecurityException("SMS 권한 없음")
         }
@@ -289,27 +413,32 @@ class SmsWatchdogService : Service() {
             SmsManager.getDefault()
         } ?: throw IllegalStateException("SmsManager 사용 불가")
 
-        var sentCount = 0
-        for (phone in phones) {
-            val cleanPhone = phone.replace(Regex("[^0-9]"), "")
-            if (cleanPhone.isBlank()) continue
+        val cleanPhones = phones.map { it.replace(Regex("[^0-9]"), "") }.filter { it.isNotBlank() }
+        if (cleanPhones.isEmpty()) throw IllegalStateException("유효한 전화번호 없음")
+        val partsPerPhone = cleanPhones.map { smsManager.divideMessage(message).size.coerceAtLeast(1) }
+        val expectedResults = partsPerPhone.sum()
+        SmsSentReceiver.prepare(context, docId, source, retryCount, expectedResults)
+
+        var requestIndex = 0
+        for (cleanPhone in cleanPhones) {
             val parts = smsManager.divideMessage(message)
             if (parts.size > 1) {
-                smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
+                val intents = ArrayList<PendingIntent>()
+                for (partIndex in parts.indices) {
+                    intents.add(SmsSentReceiver.pendingIntent(context, docId, source, retryCount, expectedResults, requestIndex++))
+                }
+                smsManager.sendMultipartTextMessage(cleanPhone, null, parts, intents, null)
             } else {
-                smsManager.sendTextMessage(cleanPhone, null, message, null, null)
+                smsManager.sendTextMessage(
+                    cleanPhone,
+                    null,
+                    message,
+                    SmsSentReceiver.pendingIntent(context, docId, source, retryCount, expectedResults, requestIndex++),
+                    null
+                )
             }
-            sentCount++
         }
-        if (sentCount == 0) throw IllegalStateException("유효한 전화번호 없음")
-    }
-
-    private fun buildAttendanceMessage(studentName: String, type: String, time: String): String {
-        return if (type == "checkin") {
-            "[미래학원] $time $studentName 원생이 등원하였습니다. 최선을 다해 지도하겠습니다."
-        } else {
-            "[미래학원] $time $studentName 원생이 공부를 마치고 귀가할 예정입니다."
-        }
+        return expectedResults
     }
 
     private fun phoneList(fields: JSONObject): List<String> {
@@ -346,22 +475,6 @@ class SmsWatchdogService : Service() {
         }
         conn.disconnect()
         return response
-    }
-
-    private fun patchJson(urlString: String, body: String): Int {
-        val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
-            requestMethod = "PATCH"
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-        }
-        conn.outputStream.use { it.write(body.toByteArray()) }
-        val responseCode = conn.responseCode
-        if (responseCode !in 200..299) {
-            val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            Log.w(TAG, "Firestore PATCH 실패 $responseCode: $err")
-        }
-        conn.disconnect()
-        return responseCode
     }
 
     private fun createNotificationChannel() {

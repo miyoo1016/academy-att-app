@@ -95,6 +95,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "알람 수신: ${intent.action}")
+        SmsWatchdogService.writeWatchdogStatus(context, "alarm_received")
 
         // === WakeLock 획득 (CPU 슬립 방지, 10분 타임아웃) ===
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -170,6 +171,11 @@ class SmsAlarmReceiver : BroadcastReceiver() {
             Log.i(TAG, "✅ [완전 무음 모드] 네이티브 감시 서비스 가동")
         } catch (e: Exception) {
             Log.e(TAG, "❌ 복구 실패: ${e.message}")
+            SmsWatchdogService.writeWatchdogStatus(
+                context,
+                "alarm_recovery_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
         }
     }
 

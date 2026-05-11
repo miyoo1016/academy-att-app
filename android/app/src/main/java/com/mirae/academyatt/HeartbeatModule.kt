@@ -12,6 +12,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.WritableNativeMap
 
 /**
  * HeartbeatModule
@@ -50,6 +51,71 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
     fun startWatchdog() {
         SmsWatchdogService.start(reactApplicationContext, "app")
         SmsWatchdogService.processPendingNow(reactApplicationContext, "app")
+    }
+
+    /** Dashboard 진단 버튼: Foreground Service 재시작 */
+    @ReactMethod
+    fun restartWatchdog(promise: Promise) {
+        try {
+            SmsWatchdogService.start(reactApplicationContext, "manual_restart")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            SmsWatchdogService.writeWatchdogStatus(
+                reactApplicationContext,
+                "manual_restart_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
+            promise.reject("WATCHDOG_RESTART_FAILED", e.message, e)
+        }
+    }
+
+    /** Dashboard 진단 버튼: 최근 3일 미발송 큐 즉시 drain */
+    @ReactMethod
+    fun drainPendingSmsQueue(promise: Promise) {
+        try {
+            SmsWatchdogService.processPendingNow(reactApplicationContext, "manual_drain")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            SmsWatchdogService.writeWatchdogStatus(
+                reactApplicationContext,
+                "manual_drain_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
+            promise.reject("WATCHDOG_DRAIN_FAILED", e.message, e)
+        }
+    }
+
+    /** Dashboard 표시용 로컬 권한/절전 상태 */
+    @ReactMethod
+    fun getDiagnosticStatus(promise: Promise) {
+        try {
+            val pm = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val packageName = reactApplicationContext.packageName
+            val map = WritableNativeMap()
+            map.putBoolean("batteryOptimizationsIgnored", pm.isIgnoringBatteryOptimizations(packageName))
+            map.putBoolean(
+                "smsPermission",
+                ContextCompat.checkSelfPermission(
+                    reactApplicationContext,
+                    android.Manifest.permission.SEND_SMS
+                ) == PackageManager.PERMISSION_GRANTED
+            )
+            map.putBoolean(
+                "notificationPermission",
+                if (Build.VERSION.SDK_INT >= 33) {
+                    ContextCompat.checkSelfPermission(
+                        reactApplicationContext,
+                        android.Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    NotificationManagerCompat.from(reactApplicationContext).areNotificationsEnabled()
+                }
+            )
+            map.putDouble("lastNativePing", getLastPing(reactApplicationContext).toDouble())
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("DIAGNOSTIC_STATUS_FAILED", e.message, e)
+        }
     }
 
     /** 배터리 최적화 제외 여부 확인 */
@@ -103,6 +169,12 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
             }
             reactApplicationContext.startActivity(intent)
         }
+    }
+
+    /** 더 명확한 JS 메서드명 별칭 */
+    @ReactMethod
+    fun openBatteryOptimizationSettings() {
+        requestIgnoreBatteryOptimizations()
     }
     /** 다른 앱 위에 그리기(오버레이) 권한 여부 확인 */
     @ReactMethod

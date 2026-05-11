@@ -19,6 +19,8 @@ const { HeartbeatModule } = NativeModules;
 export default function DashboardScreen({ navigation }) {
   const [todayRecords, setTodayRecords] = useState([]);
   const [serviceInfo, setServiceInfo] = useState({ lastActive: null, status: 'unknown' });
+  const [watchdogInfo, setWatchdogInfo] = useState({});
+  const [manualDrainBusy, setManualDrainBusy] = useState(false);
   const [pendingRecords, setPendingRecords] = useState([]);
   const [permissionInfo, setPermissionInfo] = useState({
     battery: null,
@@ -92,6 +94,24 @@ export default function DashboardScreen({ navigation }) {
       }
     });
 
+    const watchdogRef = doc(db, 'watchdogStatus', 'main_terminal');
+    const unsubscribeWatchdog = onSnapshot(watchdogRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setWatchdogInfo({
+          lastWatchdogStartedAt: parseFirestoreDate(data.lastWatchdogStartedAt),
+          lastWatchdogFinishedAt: parseFirestoreDate(data.lastWatchdogFinishedAt),
+          lastWatchdogResult: data.lastWatchdogResult || '',
+          processedQueueCount: data.processedQueueCount ?? 0,
+          claimedCount: data.claimedCount ?? 0,
+          successCount: data.successCount ?? 0,
+          failureCount: data.failureCount ?? 0,
+          lastError: data.lastError || '',
+          lastSmsSuccessAt: parseFirestoreDate(data.lastSmsSuccessAt),
+        });
+      }
+    });
+
     let serviceCheckInterval = null;
     const updateInterval = () => {
       if (AppState.currentState === 'active') {
@@ -150,6 +170,7 @@ export default function DashboardScreen({ navigation }) {
       unsubscribeAtt();
       unsubscribePending();
       unsubscribeStatus();
+      unsubscribeWatchdog();
       if (serviceCheckInterval) clearInterval(serviceCheckInterval);
       appStateSub.remove();
     };
@@ -164,12 +185,21 @@ export default function DashboardScreen({ navigation }) {
   const refreshPermissions = async () => {
     if (Platform.OS !== 'android') return;
     try {
-      const [battery, sms, notifications] = await Promise.all([
-        HeartbeatModule?.isIgnoringBatteryOptimizations?.(),
-        HeartbeatModule?.hasSmsPermission?.(),
-        HeartbeatModule?.hasNotificationPermission?.(),
-      ]);
-      setPermissionInfo({ battery: !!battery, sms: !!sms, notifications: !!notifications });
+      if (HeartbeatModule?.getDiagnosticStatus) {
+        const status = await HeartbeatModule.getDiagnosticStatus();
+        setPermissionInfo({
+          battery: !!status.batteryOptimizationsIgnored,
+          sms: !!status.smsPermission,
+          notifications: !!status.notificationPermission,
+        });
+      } else {
+        const [battery, sms, notifications] = await Promise.all([
+          HeartbeatModule?.isIgnoringBatteryOptimizations?.(),
+          HeartbeatModule?.hasSmsPermission?.(),
+          HeartbeatModule?.hasNotificationPermission?.(),
+        ]);
+        setPermissionInfo({ battery: !!battery, sms: !!sms, notifications: !!notifications });
+      }
     } catch (e) {
       console.error('권한 상태 확인 오류:', e);
     }
@@ -177,10 +207,25 @@ export default function DashboardScreen({ navigation }) {
 
   const openBatterySettings = async () => {
     try {
-      await HeartbeatModule?.requestIgnoreBatteryOptimizations?.();
+      await (HeartbeatModule?.openBatteryOptimizationSettings?.() || HeartbeatModule?.requestIgnoreBatteryOptimizations?.());
       setTimeout(refreshPermissions, 1000);
     } catch (e) {
       showAlert('오류', '배터리 최적화 설정 화면을 열지 못했습니다.');
+    }
+  };
+
+  const forceDrainQueue = async () => {
+    if (manualDrainBusy) return;
+    setManualDrainBusy(true);
+    try {
+      await HeartbeatModule?.restartWatchdog?.();
+      await HeartbeatModule?.drainPendingSmsQueue?.();
+      await refreshPermissions();
+      showAlert('실행됨', '미발송 SMS 재처리를 시작했습니다. 결과는 진단 영역에 곧 반영됩니다.');
+    } catch (e) {
+      showAlert('실패', e?.message || '강제 재처리를 시작하지 못했습니다.');
+    } finally {
+      setManualDrainBusy(false);
     }
   };
 
@@ -339,13 +384,20 @@ export default function DashboardScreen({ navigation }) {
           <View style={styles.diagnosticGrid}>
             <Text style={styles.diagnosticText}>미발송: {pendingRecords.length}건</Text>
             <Text style={styles.diagnosticText}>실패/재시도: {failedRetryCount}건</Text>
-            <Text style={styles.diagnosticText}>Watchdog: {getTimeDiffText(serviceInfo.watchdogLastRun)}</Text>
-            <Text style={styles.diagnosticText}>최근 성공: {getTimeDiffText(serviceInfo.lastSmsSuccessAt)}</Text>
+            <Text style={styles.diagnosticText}>시작: {getTimeDiffText(watchdogInfo.lastWatchdogStartedAt)}</Text>
+            <Text style={styles.diagnosticText}>종료: {getTimeDiffText(watchdogInfo.lastWatchdogFinishedAt)}</Text>
+            <Text style={styles.diagnosticText}>조회/Claim: {watchdogInfo.processedQueueCount ?? 0}/{watchdogInfo.claimedCount ?? 0}</Text>
+            <Text style={styles.diagnosticText}>성공/실패: {watchdogInfo.successCount ?? 0}/{watchdogInfo.failureCount ?? 0}</Text>
+            <Text style={styles.diagnosticText}>최근 성공: {getTimeDiffText(watchdogInfo.lastSmsSuccessAt || serviceInfo.lastSmsSuccessAt)}</Text>
+            <Text style={styles.diagnosticText}>결과: {watchdogInfo.lastWatchdogResult || serviceInfo.lastRunSource || '기록 없음'}</Text>
             <Text style={styles.diagnosticText}>SMS 권한: {permissionInfo.sms ? '허용' : '확인 필요'}</Text>
             <Text style={styles.diagnosticText}>알림 권한: {permissionInfo.notifications ? '허용' : '확인 필요'}</Text>
             <Text style={styles.diagnosticText}>배터리 제한: {permissionInfo.battery ? '제외됨' : '설정 필요'}</Text>
-            <Text style={styles.diagnosticText}>마지막 오류: {serviceInfo.lastError || '없음'}</Text>
+            <Text style={styles.diagnosticText}>마지막 오류: {watchdogInfo.lastError || serviceInfo.lastError || '없음'}</Text>
           </View>
+          <TouchableOpacity style={[styles.settingsBtn, manualDrainBusy && styles.settingsBtnDisabled]} onPress={forceDrainQueue} disabled={manualDrainBusy}>
+            <Text style={styles.settingsBtnText}>{manualDrainBusy ? '재처리 시작 중...' : '미발송 강제 재처리 / 진단'}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.settingsBtn} onPress={openBatterySettings}>
             <Text style={styles.settingsBtnText}>배터리 최적화 제외 설정 열기</Text>
           </TouchableOpacity>
@@ -506,5 +558,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
   },
+  settingsBtnDisabled: { opacity: 0.6 },
   settingsBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 });

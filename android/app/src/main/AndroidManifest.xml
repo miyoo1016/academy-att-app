@@ -78,6 +78,16 @@
       </intent-filter>
     </receiver>
 
+    <!-- SMS sent 결과 수신: RESULT_OK 확인 후에만 attendance를 processed:true로 변경 -->
+    <receiver
+      android:name=".SmsSentReceiver"
+      android:exported="false"
+      android:enabled="true">
+      <intent-filter>
+        <action android:name="com.mirae.academyatt.SMS_SENT"/>
+      </intent-filter>
+    </receiver>
+
 
     <!-- FCM 수신 서비스: JS 독립적으로 백그라운드에서 SMS 발송 -->
     <service

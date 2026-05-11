@@ -27,6 +27,7 @@ class FcmService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         Log.d(TAG, "FCM 메시 수신: from=${remoteMessage.from}")
+        SmsWatchdogService.writeWatchdogStatus(applicationContext, "fcm_received")
         SmsWatchdogService.start(applicationContext, "fcm")
         SmsWatchdogService.processPendingNow(applicationContext, "fcm")
 
