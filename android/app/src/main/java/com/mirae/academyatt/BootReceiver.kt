@@ -20,9 +20,10 @@ class BootReceiver : BroadcastReceiver() {
         if (action == Intent.ACTION_BOOT_COMPLETED ||
             action == Intent.ACTION_MY_PACKAGE_REPLACED) {
 
-            Log.i("BootReceiver", "부팅/업데이트 → Watchdog + AlarmManager 시작")
+            Log.i("BootReceiver", "부팅/업데이트 → Watchdog + AlarmManager + Daily Rescue 시작")
             SmsWatchdogService.start(context)
             SmsAlarmReceiver.scheduleRepeatingAlarm(context)
+            DailyRescueAlarmReceiver.scheduleNext(context, "boot")
         }
     }
 }

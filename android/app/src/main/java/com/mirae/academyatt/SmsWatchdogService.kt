@@ -300,6 +300,8 @@ class SmsWatchdogService : Service() {
                 lastError = lastError
             )
             Log.e(TAG, "❌ 미발송 재처리 전체 오류: ${e.message}")
+        } finally {
+            DailyRescueAlarmReceiver.scheduleNext(context, "watchdog_finished")
         }
     }
 

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">미래학원 SMS V2</string>
+    <string name="title_header">미래학원 SMS 발송기 V2</string>
+    <string name="subtitle_header">관리자폰 전용 · com.mirae.academyatt.sender2 · 기존 앱과 공존</string>
+
+    <string name="section_token">FCM 토큰 상태</string>
+    <string name="section_queue">미발송 큐 상태</string>
+    <string name="section_sms">최근 SMS 발송 결과</string>
+    <string name="section_permissions">권한 / 설정</string>
+
+    <string name="btn_refresh_token">토큰 강제 갱신</string>
+    <string name="btn_sweep">미발송 큐 즉시 확인</string>
+    <string name="btn_request_sms">SMS 발송 권한 요청</string>
+    <string name="btn_request_notif">알림 권한 요청 (Android 13+)</string>
+    <string name="btn_battery_opt">배터리 최적화 제외 설정 열기</string>
+
+    <string name="token_loading">토큰 정보 로딩 중...</string>
+    <string name="queue_idle">큐 확인 대기 중...</string>
+    <string name="sms_none">아직 발송 내역 없음</string>
+
+    <string name="footer_hint">이 화면이 열려 있는 동안 30초마다 미발송 큐를 확인합니다. 화면을 닫아도 FCM 푸시는 받습니다.</string>
+</resources>

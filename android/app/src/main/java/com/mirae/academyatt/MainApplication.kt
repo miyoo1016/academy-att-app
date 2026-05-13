@@ -57,6 +57,9 @@ class MainApplication : Application(), ReactApplication {
     // 2. AlarmManager 기반 감시 시작 (10분 주기, Doze 모드 관통)
     // Android 10+에서 startActivity가 차단될 때도 독립적으로 동작
     SmsAlarmReceiver.scheduleRepeatingAlarm(this)
+
+    // 3. 하루 2회 Daily Rescue 예약 (Activity를 띄우지 않고 SMS 엔진만 깨움)
+    DailyRescueAlarmReceiver.scheduleNext(this, "app_start")
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {

@@ -111,6 +111,7 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
                     NotificationManagerCompat.from(reactApplicationContext).areNotificationsEnabled()
                 }
             )
+            map.putBoolean("exactAlarmPermission", DailyRescueAlarmReceiver.canScheduleExactAlarm(reactApplicationContext))
             map.putDouble("lastNativePing", getLastPing(reactApplicationContext).toDouble())
             promise.resolve(map)
         } catch (e: Exception) {
@@ -176,6 +177,99 @@ class HeartbeatModule(reactContext: ReactApplicationContext)
     fun openBatteryOptimizationSettings() {
         requestIgnoreBatteryOptimizations()
     }
+
+    /** 앱 실행/복귀/Dashboard 진입 시 Daily Rescue 다음 알람을 확인 */
+    @ReactMethod
+    fun scheduleDailyRescue() {
+        DailyRescueAlarmReceiver.scheduleNext(reactApplicationContext, "app_schedule")
+    }
+
+    /** Daily Rescue 활성화 */
+    @ReactMethod
+    fun enableDailyRescue(promise: Promise) {
+        try {
+            DailyRescueAlarmReceiver.setEnabled(reactApplicationContext, true)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            SmsWatchdogService.writeWatchdogStatus(
+                reactApplicationContext,
+                "daily_rescue_enable_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
+            promise.reject("DAILY_RESCUE_ENABLE_FAILED", e.message, e)
+        }
+    }
+
+    /** Daily Rescue 비활성화 */
+    @ReactMethod
+    fun disableDailyRescue(promise: Promise) {
+        try {
+            DailyRescueAlarmReceiver.setEnabled(reactApplicationContext, false)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("DAILY_RESCUE_DISABLE_FAILED", e.message, e)
+        }
+    }
+
+    /** Dashboard 버튼: Daily Rescue 즉시 실행 */
+    @ReactMethod
+    fun triggerDailyRescueNow(promise: Promise) {
+        try {
+            DailyRescueAlarmReceiver.triggerNow(reactApplicationContext, "daily_rescue_manual")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            SmsWatchdogService.writeWatchdogStatus(
+                reactApplicationContext,
+                "daily_rescue_manual_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
+            promise.reject("DAILY_RESCUE_TRIGGER_FAILED", e.message, e)
+        }
+    }
+
+    /** Dashboard 표시용 Daily Rescue 로컬 상태 */
+    @ReactMethod
+    fun getDailyRescueStatus(promise: Promise) {
+        try {
+            val status = DailyRescueAlarmReceiver.statusMap(reactApplicationContext)
+            val map = WritableNativeMap()
+            map.putBoolean("enabled", status.optBoolean("enabled", true))
+            map.putDouble("nextAt", status.optLong("nextAt", 0L).toDouble())
+            map.putDouble("lastFiredAt", status.optLong("lastFiredAt", 0L).toDouble())
+            map.putString("lastResult", status.optString("lastResult", ""))
+            map.putBoolean("exactAlarmPermission", status.optBoolean("exactAlarmPermission", true))
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("DAILY_RESCUE_STATUS_FAILED", e.message, e)
+        }
+    }
+
+    /** 사용자가 누른 경우에만 정확한 알람 권한 설정 화면을 연다. */
+    @ReactMethod
+    fun openExactAlarmSettings() {
+        try {
+            val packageName = reactApplicationContext.packageName
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            } else {
+                Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            reactApplicationContext.startActivity(intent)
+        } catch (e: Exception) {
+            SmsWatchdogService.writeWatchdogStatus(
+                reactApplicationContext,
+                "exact_alarm_settings_failed",
+                lastError = "${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+    }
+
     /** 다른 앱 위에 그리기(오버레이) 권한 여부 확인 */
     @ReactMethod
     fun canDrawOverlays(promise: Promise) {

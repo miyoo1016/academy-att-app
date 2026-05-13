@@ -21,11 +21,20 @@ export default function DashboardScreen({ navigation }) {
   const [serviceInfo, setServiceInfo] = useState({ lastActive: null, status: 'unknown' });
   const [watchdogInfo, setWatchdogInfo] = useState({});
   const [manualDrainBusy, setManualDrainBusy] = useState(false);
+  const [dailyRescueBusy, setDailyRescueBusy] = useState(false);
   const [pendingRecords, setPendingRecords] = useState([]);
   const [permissionInfo, setPermissionInfo] = useState({
     battery: null,
     sms: null,
     notifications: null,
+    exactAlarm: null,
+  });
+  const [dailyRescueInfo, setDailyRescueInfo] = useState({
+    enabled: true,
+    nextAt: null,
+    lastFiredAt: null,
+    lastResult: '',
+    exactAlarmPermission: null,
   });
   const [refreshTrigger, setRefreshTrigger] = useState(0); // 화면 강제 갱신용
   const processedIds = useRef(new Set());
@@ -108,6 +117,12 @@ export default function DashboardScreen({ navigation }) {
           failureCount: data.failureCount ?? 0,
           lastError: data.lastError || '',
           lastSmsSuccessAt: parseFirestoreDate(data.lastSmsSuccessAt),
+          dailyRescueEnabled: data.dailyRescueEnabled ?? null,
+          dailyRescueNextAt: parseFirestoreDate(data.dailyRescueNextAt),
+          dailyRescueFiredAt: parseFirestoreDate(data.dailyRescueFiredAt),
+          lastDailyRescueResult: data.lastDailyRescueResult || '',
+          dailyRescueExactAlarmAllowed: data.dailyRescueExactAlarmAllowed ?? null,
+          dailyRescueLastError: data.dailyRescueLastError || '',
         });
       }
     });
@@ -128,9 +143,18 @@ export default function DashboardScreen({ navigation }) {
       }
     };
 
-    const appStateSub = AppState.addEventListener('change', updateInterval);
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      updateInterval();
+      if (state === 'active') {
+        HeartbeatModule?.scheduleDailyRescue?.();
+        refreshPermissions();
+        refreshDailyRescueStatus();
+      }
+    });
     updateInterval(); // 초기 실행
     refreshPermissions();
+    refreshDailyRescueStatus();
+    HeartbeatModule?.scheduleDailyRescue?.();
 
     const checkAndAutoImportStudents = async () => {
       try {
@@ -191,6 +215,7 @@ export default function DashboardScreen({ navigation }) {
           battery: !!status.batteryOptimizationsIgnored,
           sms: !!status.smsPermission,
           notifications: !!status.notificationPermission,
+          exactAlarm: !!status.exactAlarmPermission,
         });
       } else {
         const [battery, sms, notifications] = await Promise.all([
@@ -198,10 +223,29 @@ export default function DashboardScreen({ navigation }) {
           HeartbeatModule?.hasSmsPermission?.(),
           HeartbeatModule?.hasNotificationPermission?.(),
         ]);
-        setPermissionInfo({ battery: !!battery, sms: !!sms, notifications: !!notifications });
+        setPermissionInfo({ battery: !!battery, sms: !!sms, notifications: !!notifications, exactAlarm: null });
       }
     } catch (e) {
       console.error('권한 상태 확인 오류:', e);
+    }
+  };
+
+  const refreshDailyRescueStatus = async () => {
+    if (Platform.OS !== 'android') return;
+    try {
+      const status = await HeartbeatModule?.getDailyRescueStatus?.();
+      if (!status) return;
+      const nextAt = status.nextAt ? new Date(status.nextAt) : null;
+      const lastFiredAt = status.lastFiredAt ? new Date(status.lastFiredAt) : null;
+      setDailyRescueInfo({
+        enabled: status.enabled !== false,
+        nextAt: Number.isNaN(nextAt?.getTime()) ? null : nextAt,
+        lastFiredAt: Number.isNaN(lastFiredAt?.getTime()) ? null : lastFiredAt,
+        lastResult: status.lastResult || '',
+        exactAlarmPermission: status.exactAlarmPermission,
+      });
+    } catch (e) {
+      console.error('Daily Rescue 상태 확인 오류:', e);
     }
   };
 
@@ -229,6 +273,46 @@ export default function DashboardScreen({ navigation }) {
     }
   };
 
+  const triggerDailyRescueNow = async () => {
+    if (dailyRescueBusy) return;
+    setDailyRescueBusy(true);
+    try {
+      await HeartbeatModule?.triggerDailyRescueNow?.();
+      setTimeout(refreshDailyRescueStatus, 1000);
+      showAlert('실행됨', 'Daily Rescue를 즉시 실행했습니다. 미발송 큐 처리 결과는 곧 반영됩니다.');
+    } catch (e) {
+      showAlert('실패', e?.message || 'Daily Rescue를 실행하지 못했습니다.');
+    } finally {
+      setDailyRescueBusy(false);
+    }
+  };
+
+  const toggleDailyRescue = async () => {
+    try {
+      const currentlyEnabled = watchdogInfo.dailyRescueEnabled ?? dailyRescueInfo.enabled;
+      if (currentlyEnabled) {
+        await HeartbeatModule?.disableDailyRescue?.();
+      } else {
+        await HeartbeatModule?.enableDailyRescue?.();
+      }
+      await refreshDailyRescueStatus();
+    } catch (e) {
+      showAlert('오류', e?.message || 'Daily Rescue 설정을 바꾸지 못했습니다.');
+    }
+  };
+
+  const openExactAlarmSettings = async () => {
+    try {
+      await HeartbeatModule?.openExactAlarmSettings?.();
+      setTimeout(() => {
+        refreshPermissions();
+        refreshDailyRescueStatus();
+      }, 1000);
+    } catch (e) {
+      showAlert('오류', '정확한 알람 설정 화면을 열지 못했습니다.');
+    }
+  };
+
   // 시간차 계산 함수
   const getTimeDiffText = (date) => {
     if (!date) return '기록 없음';
@@ -236,6 +320,17 @@ export default function DashboardScreen({ navigation }) {
     if (diff < 60) return `${diff}초 전`;
     if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
     return `${Math.floor(diff / 3600)}시간 전`;
+  };
+
+  const formatDateTime = (date) => {
+    if (!date) return '기록 없음';
+    return date.toLocaleString('ko-KR', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
   };
 
   const sendManualSMS = async (record) => {
@@ -319,8 +414,12 @@ export default function DashboardScreen({ navigation }) {
     ? Date.now() - serviceInfo.lastActive.getTime() < 20 * 60 * 1000
     : false;
   const failedRetryCount = pendingRecords.filter(r => (r.retryCount || 0) > 0 || r.lastError).length;
+  const dailyRescueEnabled = watchdogInfo.dailyRescueEnabled ?? dailyRescueInfo.enabled;
+  const dailyRescueNextAt = dailyRescueEnabled ? (watchdogInfo.dailyRescueNextAt || dailyRescueInfo.nextAt) : null;
+  const dailyRescueFiredAt = watchdogInfo.dailyRescueFiredAt || dailyRescueInfo.lastFiredAt;
+  const exactAlarmAllowed = watchdogInfo.dailyRescueExactAlarmAllowed ?? permissionInfo.exactAlarm ?? dailyRescueInfo.exactAlarmPermission;
   const hasRiskySettings = Platform.OS === 'android'
-    && (permissionInfo.battery === false || permissionInfo.sms === false || permissionInfo.notifications === false);
+    && (permissionInfo.battery === false || permissionInfo.sms === false || permissionInfo.notifications === false || exactAlarmAllowed === false);
   void refreshTrigger;
 
   return (
@@ -384,19 +483,36 @@ export default function DashboardScreen({ navigation }) {
           <View style={styles.diagnosticGrid}>
             <Text style={styles.diagnosticText}>미발송: {pendingRecords.length}건</Text>
             <Text style={styles.diagnosticText}>실패/재시도: {failedRetryCount}건</Text>
+            <Text style={styles.diagnosticText}>Daily Rescue: {dailyRescueEnabled ? 'ON' : 'OFF'}</Text>
+            <Text style={styles.diagnosticText}>예약 시간: 12:00 / 16:00</Text>
+            <Text style={styles.diagnosticText}>다음 실행: {formatDateTime(dailyRescueNextAt)}</Text>
+            <Text style={styles.diagnosticText}>마지막 Rescue: {getTimeDiffText(dailyRescueFiredAt)}</Text>
             <Text style={styles.diagnosticText}>시작: {getTimeDiffText(watchdogInfo.lastWatchdogStartedAt)}</Text>
             <Text style={styles.diagnosticText}>종료: {getTimeDiffText(watchdogInfo.lastWatchdogFinishedAt)}</Text>
             <Text style={styles.diagnosticText}>조회/Claim: {watchdogInfo.processedQueueCount ?? 0}/{watchdogInfo.claimedCount ?? 0}</Text>
             <Text style={styles.diagnosticText}>성공/실패: {watchdogInfo.successCount ?? 0}/{watchdogInfo.failureCount ?? 0}</Text>
             <Text style={styles.diagnosticText}>최근 성공: {getTimeDiffText(watchdogInfo.lastSmsSuccessAt || serviceInfo.lastSmsSuccessAt)}</Text>
-            <Text style={styles.diagnosticText}>결과: {watchdogInfo.lastWatchdogResult || serviceInfo.lastRunSource || '기록 없음'}</Text>
+            <Text style={styles.diagnosticText}>Rescue 결과: {watchdogInfo.lastDailyRescueResult || dailyRescueInfo.lastResult || '기록 없음'}</Text>
+            <Text style={styles.diagnosticText}>Watchdog 결과: {watchdogInfo.lastWatchdogResult || serviceInfo.lastRunSource || '기록 없음'}</Text>
             <Text style={styles.diagnosticText}>SMS 권한: {permissionInfo.sms ? '허용' : '확인 필요'}</Text>
             <Text style={styles.diagnosticText}>알림 권한: {permissionInfo.notifications ? '허용' : '확인 필요'}</Text>
+            <Text style={styles.diagnosticText}>정확한 알람: {exactAlarmAllowed ? '허용' : '설정 필요'}</Text>
             <Text style={styles.diagnosticText}>배터리 제한: {permissionInfo.battery ? '제외됨' : '설정 필요'}</Text>
-            <Text style={styles.diagnosticText}>마지막 오류: {watchdogInfo.lastError || serviceInfo.lastError || '없음'}</Text>
+            <Text style={styles.diagnosticText}>마지막 오류: {watchdogInfo.dailyRescueLastError || watchdogInfo.lastError || serviceInfo.lastError || '없음'}</Text>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity style={[styles.settingsBtn, dailyRescueBusy && styles.settingsBtnDisabled]} onPress={triggerDailyRescueNow} disabled={dailyRescueBusy}>
+              <Text style={styles.settingsBtnText}>{dailyRescueBusy ? 'Rescue 실행 중...' : 'Daily Rescue 즉시 실행'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsBtn} onPress={toggleDailyRescue}>
+              <Text style={styles.settingsBtnText}>{dailyRescueEnabled ? 'Daily Rescue 끄기' : 'Daily Rescue 켜기'}</Text>
+            </TouchableOpacity>
           </View>
           <TouchableOpacity style={[styles.settingsBtn, manualDrainBusy && styles.settingsBtnDisabled]} onPress={forceDrainQueue} disabled={manualDrainBusy}>
             <Text style={styles.settingsBtnText}>{manualDrainBusy ? '재처리 시작 중...' : '미발송 강제 재처리 / 진단'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.settingsBtn} onPress={openExactAlarmSettings}>
+            <Text style={styles.settingsBtnText}>정확한 알람 권한 설정 열기</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.settingsBtn} onPress={openBatterySettings}>
             <Text style={styles.settingsBtnText}>배터리 최적화 제외 설정 열기</Text>
@@ -549,6 +665,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#5D5A12',
     lineHeight: 18,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   settingsBtn: {
     marginTop: 10,

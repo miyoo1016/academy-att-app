@@ -45,6 +45,7 @@ export default function App() {
 
           // FCM 설정 (주 단말기 토큰 등록)
           HeartbeatModule?.startWatchdog?.();
+          HeartbeatModule?.scheduleDailyRescue?.();
           await setupFcmToken();
           subscribeToTokenRefresh();
         } catch (e) {
@@ -72,6 +73,7 @@ export default function App() {
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (Platform.OS === 'android' && state === 'active') {
         HeartbeatModule?.startWatchdog?.();
+        HeartbeatModule?.scheduleDailyRescue?.();
       }
     });
 

@@ -78,6 +78,16 @@
       </intent-filter>
     </receiver>
 
+    <!-- Daily Rescue: 하루 2회 화면 없이 Watchdog 큐 처리 -->
+    <receiver
+      android:name=".DailyRescueAlarmReceiver"
+      android:exported="false"
+      android:enabled="true">
+      <intent-filter>
+        <action android:name="com.mirae.academyatt.DAILY_RESCUE"/>
+      </intent-filter>
+    </receiver>
+
     <!-- SMS sent 결과 수신: RESULT_OK 확인 후에만 attendance를 processed:true로 변경 -->
     <receiver
       android:name=".SmsSentReceiver"

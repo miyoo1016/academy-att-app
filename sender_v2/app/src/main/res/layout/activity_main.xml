@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/title_header"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/subtitle_header"
+            android:textSize="12sp"
+            android:paddingBottom="18dp"
+            android:textColor="#666666" />
+
+        <!-- Token status card -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_token"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:paddingTop="4dp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/txtTokenStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#F2F2F2"
+            android:padding="12dp"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:text="@string/token_loading" />
+
+        <Button
+            android:id="@+id/btnRefreshToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/btn_refresh_token" />
+
+        <!-- Queue status -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_queue"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:paddingTop="18dp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/txtQueueStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#F2F2F2"
+            android:padding="12dp"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:text="@string/queue_idle" />
+
+        <Button
+            android:id="@+id/btnSweep"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/btn_sweep" />
+
+        <!-- SMS status -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_sms"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:paddingTop="18dp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/txtSmsStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#F2F2F2"
+            android:padding="12dp"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:text="@string/sms_none" />
+
+        <!-- Permission shortcuts -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_permissions"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:paddingTop="18dp"
+            android:paddingBottom="6dp" />
+
+        <Button
+            android:id="@+id/btnRequestSms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/btn_request_sms" />
+
+        <Button
+            android:id="@+id/btnRequestNotif"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/btn_request_notif" />
+
+        <Button
+            android:id="@+id/btnBatteryOpt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/btn_battery_opt" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/footer_hint"
+            android:textSize="11sp"
+            android:textColor="#666666"
+            android:paddingTop="24dp"
+            android:paddingBottom="12dp" />
+
+    </LinearLayout>
+</ScrollView>

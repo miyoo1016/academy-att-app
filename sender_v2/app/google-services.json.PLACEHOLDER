@@ -1,0 +1,14 @@
+{
+  "_comment": "PLACEHOLDER — do NOT use as-is.",
+  "_instructions": [
+    "1. Open https://console.firebase.google.com/project/attmirae/settings/general",
+    "2. Under 'Your apps' click 'Add app' → Android",
+    "3. Set Android package name to: com.mirae.academyatt.sender2",
+    "4. (App nickname: 'AcademyAtt V2 Sender' or similar)",
+    "5. SHA-1 is NOT required for FCM data messages — skip it",
+    "6. Click 'Register app', then 'Download google-services.json'",
+    "7. Save that file as: sender_v2/app/google-services.json",
+    "8. Delete this PLACEHOLDER file once the real one is in place",
+    "9. Verify the new JSON contains BOTH clients: com.mirae.academyatt AND com.mirae.academyatt.sender2"
+  ]
+}

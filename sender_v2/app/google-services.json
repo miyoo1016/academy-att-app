@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "688051685207",
+    "project_id": "attmirae",
+    "storage_bucket": "attmirae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:688051685207:android:10cd9bbaca01616d406012",
+        "android_client_info": {
+          "package_name": "com.mirae.academyatt"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:688051685207:android:b3933572cc8da434406012",
+        "android_client_info": {
+          "package_name": "com.mirae.academyatt.sender2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCFwvKTiJj8EM9u2zp3RqLP4TFq0XtDYCs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
